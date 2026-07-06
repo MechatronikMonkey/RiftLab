@@ -1,12 +1,13 @@
-"""Liest eine RiftRec-SQLite-Session in speicherfreundliche Arrays.
+"""Reads a RiftRec SQLite session into memory-friendly arrays.
 
-Der gemeinsame Zeitnenner ist `t_s` = Sekunden seit Session-Start, abgeleitet
-aus `mono_ns - session.mono_anchor_ns`. Dieselbe Uhr fuer HR, RR und Events
-macht die Streams direkt uebereinanderlegbar (der "Merge" ist hier ein Join).
+The shared time base is `t_s` = seconds since session start, derived from
+`mono_ns - session.mono_anchor_ns`. Using one clock for HR, RR and events makes
+the streams directly overlayable (the "merge" is a join here).
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,6 +21,7 @@ class EventMark:
     t_s: float
     event_type: str
     game_time_s: Optional[float]
+    payload: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -29,9 +31,9 @@ class SessionData:
     session_index: Optional[int]
     started_utc: str
     schema_version: int
-    hr_t: np.ndarray          # Sekunden seit Start
+    hr_t: np.ndarray          # seconds since start
     hr_bpm: np.ndarray
-    rr_t: np.ndarray          # Sekunden seit Start
+    rr_t: np.ndarray          # seconds since start
     rr_ms: np.ndarray
     events: list[EventMark] = field(default_factory=list)
 
@@ -43,7 +45,7 @@ class SessionData:
 
 
 def load_session(db_path: str | Path, session_id: Optional[str] = None) -> SessionData:
-    """Laedt eine Session. Ohne `session_id` wird die zuletzt gestartete genommen."""
+    """Load a session. Without `session_id` the most recently started one is used."""
     conn = sqlite3.connect(f"file:{Path(db_path)}?mode=ro", uri=True)
     try:
         conn.row_factory = sqlite3.Row
@@ -56,7 +58,7 @@ def load_session(db_path: str | Path, session_id: Optional[str] = None) -> Sessi
                 "SELECT * FROM session WHERE session_id=?", (session_id,)
             ).fetchone()
         if row is None:
-            raise ValueError(f"Keine Session in {db_path} gefunden")
+            raise ValueError(f"No session found in {db_path}")
 
         sid = row["session_id"]
         anchor = row["mono_anchor_ns"]
@@ -76,14 +78,24 @@ def load_session(db_path: str | Path, session_id: Optional[str] = None) -> Sessi
         hr_t, hr_bpm = _series("hr_sample", "hr_bpm")
         rr_t, rr_ms = _series("rr_interval", "rr_ms")
 
+        def _payload(raw: Optional[str]) -> dict:
+            if not raw:
+                return {}
+            try:
+                obj = json.loads(raw)
+                return obj if isinstance(obj, dict) else {}
+            except (ValueError, TypeError):
+                return {}
+
         events = [
             EventMark(
                 t_s=(r["mono_ns"] - anchor) / 1e9,
                 event_type=r["event_type"],
                 game_time_s=r["game_time_s"],
+                payload=_payload(r["payload_json"]),
             )
             for r in conn.execute(
-                "SELECT mono_ns, event_type, game_time_s FROM game_event "
+                "SELECT mono_ns, event_type, game_time_s, payload_json FROM game_event "
                 "WHERE session_id=? ORDER BY mono_ns",
                 (sid,),
             ).fetchall()
