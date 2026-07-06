@@ -1,0 +1,2 @@
+# Plotten des Session-Verlaufs (zieht numpy als Abhaengigkeit mit)
+matplotlib
