@@ -36,6 +36,7 @@ class SessionData:
     rr_t: np.ndarray          # seconds since start
     rr_ms: np.ndarray
     events: list[EventMark] = field(default_factory=list)
+    active_riot_id: Optional[str] = None
 
     @property
     def duration_s(self) -> float:
@@ -101,12 +102,16 @@ def load_session(db_path: str | Path, session_id: Optional[str] = None) -> Sessi
             ).fetchall()
         ]
 
+        # active_riot_id may be absent on a session table written before this
+        # column existed (RiftLab is read-only and cannot migrate the file).
+        row_keys = row.keys()
         return SessionData(
             session_id=sid,
             participant_id=row["participant_id"],
             session_index=row["session_index"],
             started_utc=row["started_utc"],
             schema_version=row["schema_version"],
+            active_riot_id=row["active_riot_id"] if "active_riot_id" in row_keys else None,
             hr_t=hr_t, hr_bpm=hr_bpm, rr_t=rr_t, rr_ms=rr_ms, events=events,
         )
     finally:

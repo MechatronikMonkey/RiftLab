@@ -119,7 +119,10 @@ def make_figure(data: SessionData, rmssd_window: int = 10,
                 active_player: Optional[str] = None):
     import matplotlib.pyplot as plt
 
-    active_norm = _norm(active_player or data.participant_id)
+    # active_riot_id is used only to classify kill/death/assist below - it is
+    # never rendered on the figure (title/labels stay on the pseudonymous
+    # participant_id, see `who` further down) so the chart itself stays anonymous.
+    active_norm = _norm(active_player or data.active_riot_id or data.participant_id)
 
     fig, (ax_hr, ax_hrv, ax_ev) = plt.subplots(
         3, 1, sharex=True, figsize=(13, 10),
