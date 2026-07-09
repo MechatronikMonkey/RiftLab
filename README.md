@@ -29,6 +29,14 @@ python -m riftlab plot session.sqlite --session <uuid>
 python -m riftlab plot session.sqlite --active-player "Name#TAG"
 ```
 
+Interactive viewer (EW-53) — open a file, pick a session from the dropdown,
+zoom/pan the HR curve:
+
+```
+python -m riftlab gui                    # choose a file via dialog
+python -m riftlab gui path/to/session.sqlite
+```
+
 Create a test DB without a match/hardware (from the RiftRec directory):
 
 ```
@@ -41,6 +49,8 @@ python -m riftrec record --source fake --seconds 60 --db demo.sqlite
   since session start (from `mono_ns - session.mono_anchor_ns`)
 - `riftlab/metrics.py` — HRV (rolling RMSSD) from RR intervals
 - `riftlab/plot.py` — matplotlib figure (HR, HRV, LoL event timeline)
+- `riftlab/gui/` — interactive PySide6 + pyqtgraph viewer (`model.py` = pure
+  SessionData→plot transform, `app.py` = the Qt window)
 - `riftlab/assets/events/` — PNG event icons (emoji fallback if missing)
 - `riftlab/cli.py` — `python -m riftlab plot ...`
 - `tests/test_loader.py` — against a hand-written contract DB (proves the decoupling)

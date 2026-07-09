@@ -3,6 +3,8 @@
 Without --out a window is opened (show); with --out the chart is rendered
 headlessly to a PNG. --session selects a specific session id (otherwise the
 most recent one).
+
+`python -m riftlab gui [session.sqlite]` opens the interactive viewer (EW-53).
 """
 
 from __future__ import annotations
@@ -27,7 +29,16 @@ def main(argv: list[str] | None = None) -> None:
                    help="Riot name of the player, to split kill/death/assist "
                         "(otherwise the participant_id is used)")
 
+    g = sub.add_parser("gui", help="Open the interactive viewer (EW-53)")
+    g.add_argument("db_path", nargs="?", default=None,
+                   help="Optional .sqlite to open on start (otherwise use the file dialog)")
+
     args = parser.parse_args(argv)
+
+    if args.command == "gui":
+        from .gui.app import run_gui  # local import: Qt only needed for the GUI
+        raise SystemExit(run_gui(args.db_path))
+
     data = load_session(args.db_path, session_id=args.session)
     if data.schema_version > SUPPORTED_SCHEMA_VERSION:
         print(f"[warn] session schema v{data.schema_version} > supported "

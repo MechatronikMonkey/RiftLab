@@ -24,6 +24,41 @@ class EventMark:
     payload: dict = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class SessionInfo:
+    """Lightweight session header for pickers - no sample arrays are read."""
+    session_id: str
+    session_index: Optional[int]
+    participant_id: Optional[str]
+    started_utc: str
+
+
+def list_sessions(db_path: str | Path) -> list[SessionInfo]:
+    """List the sessions in a file, ordered by session_index (then start time).
+
+    Reads only the `session` table so a multi-session file can be offered in a
+    dropdown without loading every sample.
+    """
+    conn = sqlite3.connect(f"file:{Path(db_path)}?mode=ro", uri=True)
+    try:
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute(
+            "SELECT session_id, session_index, participant_id, started_utc "
+            "FROM session ORDER BY session_index IS NULL, session_index, started_utc"
+        ).fetchall()
+        return [
+            SessionInfo(
+                session_id=r["session_id"],
+                session_index=r["session_index"],
+                participant_id=r["participant_id"],
+                started_utc=r["started_utc"],
+            )
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
 @dataclass
 class SessionData:
     session_id: str

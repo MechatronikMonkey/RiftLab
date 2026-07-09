@@ -1,2 +1,5 @@
 # Plotten des Session-Verlaufs (zieht numpy als Abhaengigkeit mit)
 matplotlib
+# Interaktiver Viewer (EW-53): Qt-Fenster + zoombare Biosignal-Plots
+pyside6
+pyqtgraph
