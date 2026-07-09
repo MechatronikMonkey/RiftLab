@@ -13,6 +13,7 @@ from pathlib import Path
 import numpy as np
 
 from riftlab.gui.model import (
+    axis_bounds,
     event_markers,
     hr_plot_model,
     hrv_plot_model,
@@ -130,6 +131,27 @@ def test_event_markers_split_kill_death_assist() -> None:
     assert by_key["death"].row != by_key["kill"].row
     assert "t = 5.0s" in by_key["death"].tip
     assert "game time 30s" in by_key["death"].tip
+
+
+def test_axis_bounds_robust_ignores_outlier_spike() -> None:
+    # a ~50 ms RMSSD trend with a couple of artefact spikes (<2% of samples,
+    # as in a real session of hundreds of RR intervals)
+    vals = np.array([50.0] * 200 + [2000.0, 2100.0])
+    raw = axis_bounds(vals, robust=False)
+    rob = axis_bounds(vals, robust=True)
+    assert raw is not None and raw[1] >= 2000.0        # min/max keeps the spike
+    assert rob is not None and rob[1] < 200.0          # robust clips it away
+
+
+def test_axis_bounds_handles_nan_and_empty() -> None:
+    assert axis_bounds(np.array([])) is None
+    assert axis_bounds(np.array([np.nan, np.nan])) is None
+    # NaNs ignored, real values kept
+    lo, hi = axis_bounds(np.array([np.nan, 10.0, 20.0]))
+    assert (lo, hi) == (10.0, 20.0)
+    # flat series gets breathing room instead of a zero-height range
+    lo, hi = axis_bounds(np.array([5.0, 5.0, 5.0]))
+    assert lo < 5.0 < hi
 
 
 def test_event_markers_drops_unclassifiable() -> None:

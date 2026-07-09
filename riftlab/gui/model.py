@@ -86,6 +86,28 @@ def hr_plot_model(data: SessionData) -> HrPlotModel:
     )
 
 
+def axis_bounds(values: np.ndarray,
+                robust: bool = False) -> Optional[tuple[float, float]]:
+    """Y-axis (lo, hi) for a series, or None if it has no finite values.
+
+    With `robust=True` the bounds come from the 2nd/98th percentile instead of
+    the raw min/max, so a single artefact spike (common in RMSSD from a dropped
+    RR interval) does not flatten the whole curve - the spike simply runs off
+    the top of the panel. Falls back to min/max if percentiles collapse.
+    """
+    v = np.asarray(values, dtype=float)
+    finite = v[np.isfinite(v)]
+    if finite.size == 0:
+        return None
+    if robust and finite.size >= 5:
+        lo, hi = (float(x) for x in np.percentile(finite, [2, 98]))
+    else:
+        lo, hi = float(finite.min()), float(finite.max())
+    if hi <= lo:  # flat (or robust-collapsed) series: give breathing room
+        return (lo - 1.0, hi + 1.0)
+    return (lo, hi)
+
+
 def hrv_plot_model(data: SessionData, window: int = 10) -> HrvPlotModel:
     """Build the HRV (rolling RMSSD) plot model (pure).
 

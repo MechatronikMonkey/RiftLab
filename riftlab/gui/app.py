@@ -41,6 +41,7 @@ from .model import (
     EventMarker,
     HrPlotModel,
     HrvPlotModel,
+    axis_bounds,
     event_markers,
     hr_plot_model,
     hrv_plot_model,
@@ -194,17 +195,16 @@ class MainWindow(QMainWindow):
         xmax = max(data.duration_s, 1.0)
         self._p_hr.setXRange(0.0, xmax, padding=0.02)  # propagates via X-link
         self._set_yrange(self._p_hr, hr.hr_bpm)
-        self._set_yrange(self._p_hrv, hrv.rmssd_ms)
+        # HRV robust: one dropped RR interval spikes RMSSD and would otherwise
+        # squash the real trend flat.
+        self._set_yrange(self._p_hrv, hrv.rmssd_ms, robust=True)
 
     @staticmethod
-    def _set_yrange(plot: "pg.PlotItem", values: np.ndarray) -> None:
-        finite = values[np.isfinite(values)] if values.size else values
-        if finite.size:
-            lo, hi = float(finite.min()), float(finite.max())
-            if hi > lo:
-                plot.setYRange(lo, hi, padding=0.08)
-            else:  # flat series: give it a little breathing room
-                plot.setYRange(lo - 1.0, hi + 1.0, padding=0.0)
+    def _set_yrange(plot: "pg.PlotItem", values: np.ndarray,
+                    robust: bool = False) -> None:
+        bounds = axis_bounds(values, robust=robust)
+        if bounds is not None:
+            plot.setYRange(bounds[0], bounds[1], padding=0.08)
 
     def _draw_events(self, markers: list[EventMarker]) -> None:
         if not markers:
