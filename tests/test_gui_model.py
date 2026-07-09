@@ -12,8 +12,13 @@ from pathlib import Path
 
 import numpy as np
 
-from riftlab.gui.model import hr_plot_model, session_label
-from riftlab.loader import SessionData, SessionInfo, list_sessions
+from riftlab.gui.model import (
+    event_markers,
+    hr_plot_model,
+    hrv_plot_model,
+    session_label,
+)
+from riftlab.loader import EventMark, SessionData, SessionInfo, list_sessions
 
 _SCHEMA = """
 CREATE TABLE session (session_id TEXT PRIMARY KEY, participant_id TEXT,
@@ -84,6 +89,53 @@ def test_hr_plot_model_empty_session_has_no_data() -> None:
     m = hr_plot_model(data)
     assert not m.has_data
     assert "anonymous" in m.title
+
+
+def _session_with_events(events: list[EventMark], active: str = "P01") -> SessionData:
+    return SessionData(
+        session_id="x", participant_id="P01", session_index=1,
+        started_utc="2026-07-06T17:27:51+00:00", schema_version=1,
+        hr_t=np.empty(0), hr_bpm=np.empty(0),
+        rr_t=np.array([0.0, 1.0, 2.0]), rr_ms=np.array([1000.0, 900.0, 1000.0]),
+        events=events, active_riot_id=active,
+    )
+
+
+def test_hrv_plot_model_aligns_to_rr_tail() -> None:
+    data = _session_with_events([])
+    m = hrv_plot_model(data, window=10)
+    # RMSSD has len(rr)-1 = 2 values, aligned to rr_t[1:]
+    assert m.has_data
+    assert m.t_s.size == m.rmssd_ms.size == 2
+    assert np.allclose(m.t_s, [1.0, 2.0])
+    assert m.window == 10
+    assert "window 10" in m.y_label
+
+
+def test_event_markers_split_kill_death_assist() -> None:
+    events = [
+        EventMark(t_s=5.0, event_type="ChampionKill", game_time_s=30.0,
+                  payload={"VictimName": "P01#EUW"}),        # our death
+        EventMark(t_s=2.0, event_type="ChampionKill", game_time_s=10.0,
+                  payload={"KillerName": "P01#EUW"}),        # our kill
+        EventMark(t_s=8.0, event_type="ChampionKill", game_time_s=50.0,
+                  payload={"KillerName": "Foe", "VictimName": "Bar"}),  # enemy kill
+    ]
+    markers = event_markers(_session_with_events(events), active_player="P01#EUW")
+    # ordered by time: kill(2) < death(5) < otherkill(8)
+    assert [m.key for m in markers] == ["kill", "death", "otherkill"]
+    by_key = {m.key: m for m in markers}
+    assert by_key["death"].color == "#d62728"   # red
+    assert by_key["kill"].color == "#2ca02c"    # green
+    assert by_key["death"].row != by_key["kill"].row
+    assert "t = 5.0s" in by_key["death"].tip
+    assert "game time 30s" in by_key["death"].tip
+
+
+def test_event_markers_drops_unclassifiable() -> None:
+    events = [EventMark(t_s=1.0, event_type="SomethingUnknown", game_time_s=None,
+                        payload={})]
+    assert event_markers(_session_with_events(events)) == []
 
 
 if __name__ == "__main__":

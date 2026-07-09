@@ -29,8 +29,9 @@ python -m riftlab plot session.sqlite --session <uuid>
 python -m riftlab plot session.sqlite --active-player "Name#TAG"
 ```
 
-Interactive viewer (EW-53) — open a file, pick a session from the dropdown,
-zoom/pan the HR curve:
+Interactive viewer (EW-53) — open a file, pick a session from the dropdown, and
+review three X-linked panels (HR, HRV, LoL event lane) with synced zoom/pan;
+events show as coloured markers with hover tooltips:
 
 ```
 python -m riftlab gui                    # choose a file via dialog

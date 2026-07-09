@@ -1,9 +1,11 @@
-"""PySide6 + pyqtgraph main window (M0 scaffold).
+"""PySide6 + pyqtgraph main window (M1: linked HR/HRV/event timelines).
 
-Thin wiring only: open a .sqlite, pick a session from the dropdown, and draw its
-HR curve in a pyqtgraph plot with built-in zoom/pan (drag = pan, wheel = zoom,
-right-drag = box zoom, 'A' / right-click "View All" = reset). All data logic
-lives in `loader` and `model`.
+Thin wiring only: open a .sqlite, pick a session from the dropdown, and draw
+three X-linked panels - HR, HRV (rolling RMSSD) and a game-event lane. Zooming
+or panning any panel moves all of them together (`setXLink`). Every classified
+event is a coloured vertical line across all panels plus a hoverable dot in the
+event lane. All data/HRV/classification logic lives in `loader`, `metrics` and
+`model` (pure); this file only puts the arrays on screen.
 """
 
 from __future__ import annotations
@@ -32,20 +34,31 @@ from PySide6.QtWidgets import (
 )
 
 from .. import SUPPORTED_SCHEMA_VERSION
-from ..loader import SessionInfo, list_sessions, load_session
-from .model import HrPlotModel, hr_plot_model, session_label
+from ..loader import SessionData, SessionInfo, list_sessions, load_session
+from ..plot import _ROW_LABELS
+from .model import (
+    EventMarker,
+    HrPlotModel,
+    HrvPlotModel,
+    event_markers,
+    hr_plot_model,
+    hrv_plot_model,
+    session_label,
+)
 
 _HR_PEN = pg.mkPen("#c0392b", width=2)
+_HRV_PEN = pg.mkPen("#2c7fb8", width=2)
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("RiftLab viewer")
-        self.resize(1000, 600)
+        self.resize(1100, 760)
 
         self._db_path: Optional[Path] = None
         self._sessions: list[SessionInfo] = []
+        self._rmssd_window = 10
 
         open_btn = QPushButton("Open .sqlite...")
         open_btn.clicked.connect(self._choose_file)
@@ -61,15 +74,35 @@ class MainWindow(QMainWindow):
         top.addWidget(self._session_box)
         top.addStretch(1)
 
-        self._plot = pg.PlotWidget()
-        self._plot.setBackground("w")
-        self._plot.showGrid(x=True, y=True, alpha=0.25)
-        self._plot.setLabel("bottom", "Time since session start (s)")
-        self._plot.setLabel("left", "Heart rate (bpm)")
+        # -- three stacked, X-linked panels ---------------------------------
+        self._glw = pg.GraphicsLayoutWidget()
+        self._glw.setBackground("w")
+        self._p_hr = self._glw.addPlot(row=0, col=0)
+        self._p_hrv = self._glw.addPlot(row=1, col=0)
+        self._p_ev = self._glw.addPlot(row=2, col=0)
+        for p in (self._p_hr, self._p_hrv, self._p_ev):
+            p.showGrid(x=True, y=True, alpha=0.2)
+        self._p_hrv.setXLink(self._p_hr)
+        self._p_ev.setXLink(self._p_hr)
+
+        self._p_hr.setLabel("left", "Heart rate (bpm)")
+        self._p_hrv.setLabel("left", "HRV RMSSD (ms)")
+        self._p_ev.setLabel("left", "LoL events")
+        self._p_ev.setLabel("bottom", "Time since session start (s)")
+        # event lane: fixed rows labelled like the matplotlib viewer
+        self._p_ev.getAxis("left").setTicks(
+            [[(i, lbl) for i, lbl in enumerate(_ROW_LABELS)]]
+        )
+        self._p_ev.setYRange(-0.6, len(_ROW_LABELS) - 0.2)
+        self._p_ev.setMouseEnabled(y=False)
+
+        layout_ratios = (2.0, 1.2, 2.4)
+        for i, r in enumerate(layout_ratios):
+            self._glw.ci.layout.setRowStretchFactor(i, int(r * 10))
 
         layout = QVBoxLayout()
         layout.addLayout(top)
-        layout.addWidget(self._plot, 1)
+        layout.addWidget(self._glw, 1)
         central = QWidget()
         central.setLayout(layout)
         self.setCentralWidget(central)
@@ -100,7 +133,7 @@ class MainWindow(QMainWindow):
         if self._sessions:
             self._show_selected()
         else:
-            self._plot.clear()
+            self._clear_panels()
             self.statusBar().showMessage(f"No sessions in {self._db_path.name}")
 
     def _on_session_changed(self, _index: int) -> None:
@@ -120,19 +153,58 @@ class MainWindow(QMainWindow):
             )
         else:
             self.statusBar().showMessage(
-                f"{self._db_path.name} - {data.hr_bpm.size} HR samples"
+                f"{self._db_path.name} - {data.hr_bpm.size} HR samples, "
+                f"{len(data.events)} events"
             )
-        self._draw(hr_plot_model(data))
+        self._draw(data)
 
     # -- drawing ------------------------------------------------------------
-    def _draw(self, m: HrPlotModel) -> None:
-        self._plot.clear()
-        self._plot.setTitle(m.title)
-        self._plot.setLabel("bottom", m.x_label)
-        self._plot.setLabel("left", m.y_label)
-        if m.has_data:
-            self._plot.plot(m.t_s, m.hr_bpm, pen=_HR_PEN)
-        self._plot.enableAutoRange()
+    def _clear_panels(self) -> None:
+        for p in (self._p_hr, self._p_hrv, self._p_ev):
+            p.clear()
+
+    def _draw(self, data: SessionData) -> None:
+        self._clear_panels()
+
+        hr = hr_plot_model(data)
+        hrv = hrv_plot_model(data, window=self._rmssd_window)
+        markers = event_markers(data)
+
+        self._p_hr.setTitle(hr.title)
+        if hr.has_data:
+            self._p_hr.plot(hr.t_s, hr.hr_bpm, pen=_HR_PEN)
+        if hrv.has_data:
+            # RMSSD is NaN before the first full window; skip those gaps.
+            self._p_hrv.plot(hrv.t_s, hrv.rmssd_ms, pen=_HRV_PEN, connect="finite")
+
+        self._draw_events(markers)
+        self._p_hr.enableAutoRange(axis="y")
+        self._p_hrv.enableAutoRange(axis="y")
+        # a fresh file starts fully zoomed out on X
+        self._p_hr.enableAutoRange(axis="x")
+
+    def _draw_events(self, markers: list[EventMarker]) -> None:
+        if not markers:
+            return
+        # vertical guide line in every panel (a line item lives in one scene,
+        # so one InfiniteLine per panel per event)
+        for m in markers:
+            pen = pg.mkPen(m.color, width=1, style=pg.QtCore.Qt.DashLine)
+            for p in (self._p_hr, self._p_hrv, self._p_ev):
+                p.addItem(pg.InfiniteLine(pos=m.t_s, angle=90, pen=pen, movable=False))
+
+        # hoverable dots on the event lane carry the tooltip text
+        spots = [
+            {"pos": (m.t_s, m.row), "brush": pg.mkBrush(m.color),
+             "pen": pg.mkPen("k", width=0.5), "size": 11, "data": m.tip}
+            for m in markers
+        ]
+        scatter = pg.ScatterPlotItem(
+            hoverable=True, hoverSize=15,
+            tip=lambda x, y, data: data,
+        )
+        scatter.addPoints(spots)
+        self._p_ev.addItem(scatter)
 
 
 def run_gui(db_path: Optional[str] = None) -> int:
