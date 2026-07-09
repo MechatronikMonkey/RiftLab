@@ -21,6 +21,7 @@ from typing import Optional
 os.environ.setdefault("PYQTGRAPH_QT_LIB", "PySide6")
 import PySide6.QtWidgets as _qtw  # noqa: F401  (ensures PySide6 is loaded first)
 
+import numpy as np
 import pyqtgraph as pg
 from PySide6.QtWidgets import (
     QComboBox,
@@ -82,6 +83,13 @@ class MainWindow(QMainWindow):
         self._p_ev = self._glw.addPlot(row=2, col=0)
         for p in (self._p_hr, self._p_hrv, self._p_ev):
             p.showGrid(x=True, y=True, alpha=0.2)
+            # Fixed left-axis width + no SI prefix: otherwise the tick-label
+            # width changes as values/zoom change, the layout re-flows, and the
+            # linked views re-range in a feedback loop -> the panels visibly
+            # jitter until the first manual zoom disables auto-range.
+            axis = p.getAxis("left")
+            axis.setWidth(92)
+            axis.enableAutoSIPrefix(False)
         self._p_hrv.setXLink(self._p_hr)
         self._p_ev.setXLink(self._p_hr)
 
@@ -178,10 +186,25 @@ class MainWindow(QMainWindow):
             self._p_hrv.plot(hrv.t_s, hrv.rmssd_ms, pen=_HRV_PEN, connect="finite")
 
         self._draw_events(markers)
-        self._p_hr.enableAutoRange(axis="y")
-        self._p_hrv.enableAutoRange(axis="y")
-        # a fresh file starts fully zoomed out on X
-        self._p_hr.enableAutoRange(axis="x")
+
+        # Set explicit ranges from the data instead of enableAutoRange(): this
+        # both fixes the initial scaling (auto-range would otherwise fire
+        # against a not-yet-sized viewport) and turns auto-range off, so the
+        # view is static and does not keep recomputing every frame.
+        xmax = max(data.duration_s, 1.0)
+        self._p_hr.setXRange(0.0, xmax, padding=0.02)  # propagates via X-link
+        self._set_yrange(self._p_hr, hr.hr_bpm)
+        self._set_yrange(self._p_hrv, hrv.rmssd_ms)
+
+    @staticmethod
+    def _set_yrange(plot: "pg.PlotItem", values: np.ndarray) -> None:
+        finite = values[np.isfinite(values)] if values.size else values
+        if finite.size:
+            lo, hi = float(finite.min()), float(finite.max())
+            if hi > lo:
+                plot.setYRange(lo, hi, padding=0.08)
+            else:  # flat series: give it a little breathing room
+                plot.setYRange(lo - 1.0, hi + 1.0, padding=0.0)
 
     def _draw_events(self, markers: list[EventMarker]) -> None:
         if not markers:
@@ -193,18 +216,24 @@ class MainWindow(QMainWindow):
             for p in (self._p_hr, self._p_hrv, self._p_ev):
                 p.addItem(pg.InfiniteLine(pos=m.t_s, angle=90, pen=pen, movable=False))
 
-        # hoverable dots on the event lane carry the tooltip text
-        spots = [
-            {"pos": (m.t_s, m.row), "brush": pg.mkBrush(m.color),
-             "pen": pg.mkPen("k", width=0.5), "size": 11, "data": m.tip}
-            for m in markers
-        ]
-        scatter = pg.ScatterPlotItem(
-            hoverable=True, hoverSize=15,
-            tip=lambda x, y, data: data,
+        # Coloured dots on the event lane, drawn through plot() so they anchor
+        # in the view and track zoom/pan. (A bare ScatterPlotItem added via
+        # addItem does not get parented into the ViewBox under this
+        # PySide6/pyqtgraph combo and would render fixed near the top of the
+        # window instead of following the time axis.)
+        xs = np.fromiter((m.t_s for m in markers), float, len(markers))
+        ys = np.fromiter((m.row for m in markers), float, len(markers))
+        brushes = [pg.mkBrush(m.color) for m in markers]
+        dots = self._p_ev.plot(
+            xs, ys, pen=None, symbol="o", symbolSize=11,
+            symbolBrush=brushes, symbolPen=pg.mkPen("k", width=0.5),
         )
-        scatter.addPoints(spots)
-        self._p_ev.addItem(scatter)
+        # hover tooltips (event details) on the underlying scatter
+        dots.scatter.setData(
+            x=xs, y=ys, size=11, brush=brushes, pen=pg.mkPen("k", width=0.5),
+            hoverable=True, hoverSize=15,
+            data=[m.tip for m in markers], tip=lambda x, y, data: data,
+        )
 
 
 def run_gui(db_path: Optional[str] = None) -> int:

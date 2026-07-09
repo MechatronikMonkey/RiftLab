@@ -1,5 +1,7 @@
 # Plotten des Session-Verlaufs (zieht numpy als Abhaengigkeit mit)
 matplotlib
-# Interaktiver Viewer (EW-53): Qt-Fenster + zoombare Biosignal-Plots
-pyside6
+# Interaktiver Viewer (EW-53): Qt-Fenster + zoombare Biosignal-Plots.
+# pyside6 >= 6.9.3: 6.9.1 hat einen shiboken-Bug, durch den pyqtgraph-Items
+# nicht an die ViewBox gehaengt werden (Kurven/Marker landen im Nichts).
+pyside6>=6.9.3
 pyqtgraph
