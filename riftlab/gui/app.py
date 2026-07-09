@@ -29,8 +29,8 @@ import PySide6.QtWidgets as _qtw  # noqa: F401  (ensures PySide6 is loaded first
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.exporters import ImageExporter
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QKeySequence, QPalette, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -120,11 +120,10 @@ class MainWindow(QMainWindow):
         top.addWidget(self._export_view_btn)
         top.addWidget(self._export_sel_btn)
 
-        # metadata header (left) + crosshair readout (right)
+        # metadata header (left) + crosshair readout (right); colours are set
+        # by _apply_theme_colors() so they stay readable in light and dark mode
         self._header = QLabel("")
-        self._header.setStyleSheet("color:#333;")
         self._readout = QLabel("")
-        self._readout.setStyleSheet("color:#555; font-family: monospace;")
         header_row = QHBoxLayout()
         header_row.addWidget(self._header)
         header_row.addStretch(1)
@@ -166,7 +165,6 @@ class MainWindow(QMainWindow):
         # event colour legend (static)
         self._legend = QLabel(self._legend_html())
         self._legend.setWordWrap(True)
-        self._legend.setStyleSheet("color:#333;")
 
         layout = QVBoxLayout()
         layout.addLayout(top)
@@ -185,6 +183,7 @@ class MainWindow(QMainWindow):
         QShortcut(QKeySequence(Qt.Key.Key_PageDown), self, lambda: self._step_session(1))
         QShortcut(QKeySequence(Qt.Key.Key_PageUp), self, lambda: self._step_session(-1))
 
+        self._apply_theme_colors()
         self.statusBar().showMessage(
             "Open a RiftRec .sqlite to begin.  (Ctrl+O open · Ctrl+E export · "
             "Ctrl+0 reset zoom · PgUp/PgDn session)"
@@ -197,6 +196,23 @@ class MainWindow(QMainWindow):
             for label, color in legend_entries()
         ]
         return "&nbsp;&nbsp;&nbsp;".join(swatches)
+
+    def _apply_theme_colors(self) -> None:
+        """Pick label text colours that contrast with the current window
+        background, so the header/readout/legend stay legible in both light and
+        dark mode. Re-run on palette changes (see changeEvent)."""
+        dark = self.palette().color(QPalette.ColorRole.Window).lightness() < 128
+        primary = "#dcdcdc" if dark else "#333333"
+        secondary = "#b4b4b4" if dark else "#555555"
+        self._header.setStyleSheet(f"color:{primary};")
+        self._legend.setStyleSheet(f"color:{primary};")
+        self._readout.setStyleSheet(f"color:{secondary}; font-family: monospace;")
+
+    def changeEvent(self, event) -> None:
+        if event.type() in (QEvent.Type.PaletteChange,
+                             QEvent.Type.ApplicationPaletteChange):
+            self._apply_theme_colors()
+        super().changeEvent(event)
 
     # -- file / session selection -------------------------------------------
     def _choose_file(self) -> None:
