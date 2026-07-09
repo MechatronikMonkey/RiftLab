@@ -14,6 +14,7 @@ import numpy as np
 
 from riftlab.gui.model import (
     axis_bounds,
+    default_region,
     event_markers,
     hr_plot_model,
     hrv_plot_model,
@@ -152,6 +153,16 @@ def test_axis_bounds_handles_nan_and_empty() -> None:
     # flat series gets breathing room instead of a zero-height range
     lo, hi = axis_bounds(np.array([5.0, 5.0, 5.0]))
     assert lo < 5.0 < hi
+
+
+def test_default_region_centres_a_window() -> None:
+    assert default_region(1000.0, frac=0.3) == (350.0, 650.0)
+    # always a positive-width window inside [0, duration]
+    lo, hi = default_region(1000.0)
+    assert 0.0 <= lo < hi <= 1000.0
+    # zero/short duration stays valid (falls back to a 1 s span)
+    lo, hi = default_region(0.0)
+    assert lo < hi
 
 
 def test_event_markers_drops_unclassifiable() -> None:

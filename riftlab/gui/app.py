@@ -23,7 +23,9 @@ import PySide6.QtWidgets as _qtw  # noqa: F401  (ensures PySide6 is loaded first
 
 import numpy as np
 import pyqtgraph as pg
+from pyqtgraph.exporters import ImageExporter
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -42,6 +44,7 @@ from .model import (
     HrPlotModel,
     HrvPlotModel,
     axis_bounds,
+    default_region,
     event_markers,
     hr_plot_model,
     hrv_plot_model,
@@ -61,6 +64,7 @@ class MainWindow(QMainWindow):
         self._db_path: Optional[Path] = None
         self._sessions: list[SessionInfo] = []
         self._rmssd_window = 10
+        self._region: Optional[pg.LinearRegionItem] = None
 
         open_btn = QPushButton("Open .sqlite...")
         open_btn.clicked.connect(self._choose_file)
@@ -70,11 +74,20 @@ class MainWindow(QMainWindow):
         self._session_box.currentIndexChanged.connect(self._on_session_changed)
         self._session_box.setEnabled(False)
 
+        self._export_view_btn = QPushButton("Export view...")
+        self._export_view_btn.clicked.connect(lambda: self._export(selection=False))
+        self._export_sel_btn = QPushButton("Export selection...")
+        self._export_sel_btn.clicked.connect(lambda: self._export(selection=True))
+        for b in (self._export_view_btn, self._export_sel_btn):
+            b.setEnabled(False)
+
         top = QHBoxLayout()
         top.addWidget(open_btn)
         top.addWidget(QLabel("Session:"))
         top.addWidget(self._session_box)
         top.addStretch(1)
+        top.addWidget(self._export_view_btn)
+        top.addWidget(self._export_sel_btn)
 
         # -- three stacked, X-linked panels ---------------------------------
         self._glw = pg.GraphicsLayoutWidget()
@@ -143,6 +156,9 @@ class MainWindow(QMainWindow):
             self._show_selected()
         else:
             self._clear_panels()
+            self._region = None
+            self._export_view_btn.setEnabled(False)
+            self._export_sel_btn.setEnabled(False)
             self.statusBar().showMessage(f"No sessions in {self._db_path.name}")
 
     def _on_session_changed(self, _index: int) -> None:
@@ -199,6 +215,22 @@ class MainWindow(QMainWindow):
         # squash the real trend flat.
         self._set_yrange(self._p_hrv, hrv.rmssd_ms, robust=True)
 
+        self._add_region(xmax)
+        self._export_view_btn.setEnabled(True)
+        self._export_sel_btn.setEnabled(True)
+
+    def _add_region(self, xmax: float) -> None:
+        """Draggable time-window selector on the HR panel (recreated per draw,
+        since _clear_panels() removes it). Its X-range drives 'Export
+        selection'."""
+        self._region = pg.LinearRegionItem(
+            values=default_region(xmax), brush=(80, 120, 255, 40),
+            hoverBrush=(80, 120, 255, 70), movable=True,
+        )
+        self._region.setZValue(-10)  # behind the curves
+        self._region.setBounds((0.0, xmax))
+        self._p_hr.addItem(self._region)
+
     @staticmethod
     def _set_yrange(plot: "pg.PlotItem", values: np.ndarray,
                     robust: bool = False) -> None:
@@ -234,6 +266,40 @@ class MainWindow(QMainWindow):
             hoverable=True, hoverSize=15,
             data=[m.tip for m in markers], tip=lambda x, y, data: data,
         )
+
+    # -- export -------------------------------------------------------------
+    def _export(self, selection: bool) -> None:
+        """Save the three panels as a PNG - either the current view, or zoomed
+        to the selection region."""
+        if self._db_path is None or self._region is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export PNG", "", "PNG image (*.png)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+
+        restore = None
+        if selection:
+            x0, x1 = self._region.getRegion()
+            if x1 > x0:
+                restore = self._p_hr.getViewBox().viewRange()[0]
+                self._p_hr.setXRange(x0, x1, padding=0.0)  # propagates via link
+
+        # hide the selector so it does not paint over the exported figure
+        self._region.hide()
+        QApplication.processEvents()
+        try:
+            exporter = ImageExporter(self._glw.scene())
+            exporter.parameters()["width"] = 1600  # crisp, keeps aspect ratio
+            exporter.export(path)
+        finally:
+            self._region.show()
+            if restore is not None:
+                self._p_hr.setXRange(restore[0], restore[1], padding=0.0)
+        self.statusBar().showMessage(f"Exported {Path(path).name}")
 
 
 def run_gui(db_path: Optional[str] = None) -> int:

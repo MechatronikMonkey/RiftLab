@@ -86,6 +86,18 @@ def hr_plot_model(data: SessionData) -> HrPlotModel:
     )
 
 
+def default_region(duration_s: float, frac: float = 0.3) -> tuple[float, float]:
+    """A centred default selection window covering `frac` of the session.
+
+    e.g. frac=0.3 selects the middle 30% (35%..65%) of the timeline; used to
+    seed the export-region so it starts on-screen rather than at zero width.
+    """
+    d = max(float(duration_s), 1.0)
+    half = d * max(min(frac, 1.0), 0.0) / 2.0
+    mid = d / 2.0
+    return (mid - half, mid + half)
+
+
 def axis_bounds(values: np.ndarray,
                 robust: bool = False) -> Optional[tuple[float, float]]:
     """Y-axis (lo, hi) for a series, or None if it has no finite values.
