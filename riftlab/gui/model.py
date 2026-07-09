@@ -16,6 +16,10 @@ from ..loader import SessionData, SessionInfo
 from ..metrics import rolling_rmssd
 from ..plot import _EVENT_DEF, _ROWS, _norm, classify
 
+# RMSSD rolling-window bounds offered by the GUI spinbox.
+RMSSD_WINDOW_MIN = 3
+RMSSD_WINDOW_MAX = 60
+
 
 @dataclass(frozen=True)
 class HrPlotModel:
@@ -58,6 +62,58 @@ class EventMarker:
     row: int
     row_label: str
     tip: str
+
+
+def format_duration(seconds: float) -> str:
+    """Seconds as M:SS, or H:MM:SS once it passes an hour."""
+    s = int(round(max(seconds, 0.0)))
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    return f"{h}:{m:02d}:{sec:02d}" if h else f"{m}:{sec:02d}"
+
+
+def session_header(data: SessionData) -> str:
+    """One-line metadata summary for the header bar (pure).
+
+    Shows the pseudonymous participant plus start time, duration and event
+    count; the active Riot name is appended only if known (it stays out of the
+    plot title/export, which remain anonymous - this label is not exported).
+    """
+    who = data.participant_id or "anonymous"
+    parts = [f"Participant {who}"]
+    if data.session_index is not None:
+        parts.append(f"session {data.session_index}")
+    parts.append(data.started_utc[:19].replace("T", " "))
+    parts.append(f"duration {format_duration(data.duration_s)}")
+    parts.append(f"{len(data.events)} events")
+    if data.active_riot_id:
+        parts.append(f"active: {data.active_riot_id}")
+    return "   ·   ".join(parts)
+
+
+def legend_entries() -> list[tuple[str, str]]:
+    """(label, colour) for each distinct event type, in display order (pure)."""
+    seen: set[str] = set()
+    out: list[tuple[str, str]] = []
+    for _row, color, _emoji, label in _EVENT_DEF.values():
+        if label not in seen:
+            seen.add(label)
+            out.append((label, color))
+    return out
+
+
+def nearest_value(t: np.ndarray, v: np.ndarray, x: float) -> Optional[float]:
+    """Value of series (t, v) at the sample nearest to time x, or None.
+
+    Returns None if the series is empty or x lies outside its time span, so a
+    readout only shows a number where data actually exists.
+    """
+    t = np.asarray(t, dtype=float)
+    if t.size == 0 or x < t[0] or x > t[-1]:
+        return None
+    i = int(np.argmin(np.abs(t - x)))
+    val = float(np.asarray(v, dtype=float)[i])
+    return None if np.isnan(val) else val
 
 
 def session_label(info: SessionInfo) -> str:

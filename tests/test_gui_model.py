@@ -16,8 +16,12 @@ from riftlab.gui.model import (
     axis_bounds,
     default_region,
     event_markers,
+    format_duration,
     hr_plot_model,
     hrv_plot_model,
+    legend_entries,
+    nearest_value,
+    session_header,
     session_label,
 )
 from riftlab.loader import EventMark, SessionData, SessionInfo, list_sessions
@@ -163,6 +167,48 @@ def test_default_region_centres_a_window() -> None:
     # zero/short duration stays valid (falls back to a 1 s span)
     lo, hi = default_region(0.0)
     assert lo < hi
+
+
+def test_format_duration() -> None:
+    assert format_duration(0) == "0:00"
+    assert format_duration(65) == "1:05"
+    assert format_duration(3661) == "1:01:01"
+
+
+def test_session_header_fields_and_active_player() -> None:
+    data = SessionData(
+        session_id="x", participant_id="P01", session_index=2,
+        started_utc="2026-07-06T17:27:51+00:00", schema_version=1,
+        hr_t=np.array([0.0, 90.0]), hr_bpm=np.array([80.0, 82.0]),
+        rr_t=np.empty(0), rr_ms=np.empty(0),
+        events=[EventMark(t_s=10.0, event_type="GameStart", game_time_s=0.0, payload={})],
+        active_riot_id="Player#EUW",
+    )
+    h = session_header(data)
+    assert "P01" in h and "session 2" in h and "2026-07-06 17:27:51" in h
+    assert "1:30" in h              # 90 s duration
+    assert "1 events" in h
+    assert "active: Player#EUW" in h
+    # no active id -> the field is omitted
+    object.__setattr__(data, "active_riot_id", None)
+    assert "active:" not in session_header(data)
+
+
+def test_legend_entries_deduped_with_colours() -> None:
+    entries = legend_entries()
+    labels = [lbl for lbl, _ in entries]
+    assert len(labels) == len(set(labels))          # no duplicate labels
+    assert ("Death", "#d62728") in entries
+    assert any(lbl == "Dragon" for lbl, _ in entries)
+
+
+def test_nearest_value_inside_outside_and_nan() -> None:
+    t = np.array([0.0, 1.0, 2.0])
+    v = np.array([10.0, 20.0, 30.0])
+    assert nearest_value(t, v, 0.9) == 20.0          # nearest sample
+    assert nearest_value(t, v, 5.0) is None          # outside span
+    assert nearest_value(np.empty(0), np.empty(0), 1.0) is None
+    assert nearest_value(t, np.array([np.nan, 20.0, 30.0]), 0.0) is None
 
 
 def test_event_markers_drops_unclassifiable() -> None:

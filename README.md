@@ -31,8 +31,12 @@ python -m riftlab plot session.sqlite --active-player "Name#TAG"
 
 Interactive viewer (EW-53) — open a file, pick a session from the dropdown, and
 review three X-linked panels (HR, HRV, LoL event lane) with synced zoom/pan;
-events show as coloured markers with hover tooltips. Drag the blue region to
-select a time window and export the current view or the selection as PNG:
+events show as coloured markers with hover tooltips and a colour legend. A
+metadata header and a mouse crosshair with a time/HR/RMSSD readout aid reading;
+the HRV window (RMSSD length) is adjustable live. Drag the blue region to select
+a time window and export the current view or the selection as PNG. Shortcuts:
+Ctrl+O open, Ctrl+E / Ctrl+Shift+E export view/selection, Ctrl+0 reset zoom,
+PgUp/PgDn previous/next session:
 
 ```
 python -m riftlab gui                    # choose a file via dialog
