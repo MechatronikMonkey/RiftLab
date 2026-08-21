@@ -142,3 +142,20 @@ python -m riftrec record --source fake --seconds 60 --db demo.sqlite
   `test_gui_model.py` (the pure GUI transforms)
 
 Tests: `PYTHONPATH=. python -m pytest tests/`.
+
+---
+
+## Licence
+
+MIT — see [LICENSE](LICENSE). Use it, change it, build on it; keep the copyright
+notice.
+
+The licence covers the **software only**. Session recordings are never part of
+this repository (`*.sqlite` is gitignored) and are not covered — they are
+Art. 9 GDPR health data belonging to the study participants.
+
+Note on dependencies: **PySide6 is LGPL**. It is used unmodified, as a library
+installed via pip, which keeps this project's own MIT licensing intact — anyone
+receiving it can replace the Qt bindings themselves. Do not vendor or patch
+PySide6 into the source tree without revisiting that. matplotlib (PSF-based) and
+pyqtgraph (MIT) are unproblematic.

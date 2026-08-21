@@ -9,4 +9,12 @@ with marked game events.
 __version__ = "0.1.0"
 
 # Highest RiftRec schema version this reader understands.
-SUPPORTED_SCHEMA_VERSION = 1
+#
+# 3 (EW-86): RiftRec added `device_info` plus the raw channels `hr_raw` and
+#            `game_raw`, and a `contact` column on `hr_sample`. All additive -
+#            the tables this reader uses (session, hr_sample, rr_interval,
+#            game_event) are unchanged, so v2 and v3 files are read fully and
+#            the "display may be incomplete" warning would be misleading.
+#            Raise this again only after checking that the tables read here
+#            still carry what the reader expects.
+SUPPORTED_SCHEMA_VERSION = 3
