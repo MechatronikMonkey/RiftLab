@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
-from .loader import EventMark, SessionData
+from .loader import EventMark, SessionData, normalise_name as _norm
 from .metrics import rolling_rmssd
 
 _ASSET_DIR = Path(__file__).parent / "assets" / "events"
@@ -63,11 +63,6 @@ _SIMPLE_MAP = {
     "TurretKilled": "turret", "FirstBrick": "turret", "InhibKilled": "inhibitor",
     "GameStart": "gamestart", "GameEnd": "gameend",
 }
-
-
-def _norm(name: Optional[str]) -> str:
-    """Normalise a Riot name to the lowercased game name (drop the #TAG)."""
-    return (name or "").split("#")[0].strip().lower()
 
 
 def classify(ev: EventMark, active_norm: str) -> Optional[str]:
