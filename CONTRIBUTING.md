@@ -84,7 +84,15 @@ gh pr create --fill                   # or open it in the web UI
 *why* — scopes: `loader`, `metrics`, `plot`, `gui`, `docs`, `ci`.
 
 **Pull requests** are squash-merged, so the PR title becomes the commit on main.
-One check has to be green before the merge button unlocks: **`tests`**.
+Two checks have to be green before the merge button unlocks:
+
+| Check | What it does |
+|---|---|
+| `tests` | the full suite on Windows |
+| `installer` | freezes the viewer, runs `RiftLab.exe selfcheck`, compiles the installer, and uploads it as an artifact |
+
+The `installer` artifact is worth using: it is a real, installable build of your
+branch, so a packaging change can be tried on an actual machine before merging.
 
 No approving review is required while the project has one maintainer — GitHub
 does not allow approving your own pull request. Raise it to `1` in
@@ -102,17 +110,24 @@ git tag v0.2.0
 git push origin v0.2.0
 ```
 
-There is no installer to attach: RiftLab is run from a source checkout, by
-people who edit it. A release marks a state — above all **which RiftRec schema
-version it reads** — so that a recording and the tool that read it can be named
-together in a report or a thesis.
+The release carries an installer, built and self-checked on the runner. Qt,
+pyqtgraph, matplotlib and numpy are a lot to ask somebody to `pip install`
+correctly, and that step is exactly where RiftRec's zipped version failed on
+somebody else's PC. Anyone who wants to *change* RiftLab still works from a
+source checkout — the installer is for opening a recording and looking at it.
+
+A release also states **which RiftRec schema version this build reads**, so that
+a recording and the tool that read it can be named together in a report or a
+thesis.
 
 ## First-time repository setup
 
 Once, by someone with admin rights, and **in this order**:
 
 1. Push `main` while direct pushes are still allowed.
-2. Let CI run once, so GitHub has seen the check name `tests`.
+2. Let CI run once, so GitHub has seen the check names `tests` and
+   `installer`. A required check that never reports blocks merging forever,
+   and a typo in the name is invisible until a pull request hangs.
 3. Apply the rules — they live in [`.github/rulesets/`](.github/rulesets/) as
    importable JSON. In the web UI: **Settings → Rules → Rulesets → New ruleset →
    Import a ruleset**. Or `.github\setup-repo-rules.ps1`.
@@ -124,6 +139,14 @@ Once, by someone with admin rights, and **in this order**:
 pip install -r requirements.txt
 PYTHONPATH=. python -m pytest tests/     # no Qt, no recording needed
 python -m riftlab gui                    # the viewer
+python -m riftlab selfcheck              # what the packaged build must survive
+```
+
+Building the installer needs Inno Setup
+(`winget install JRSoftware.InnoSetup`):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File packaging\build.ps1
 ```
 
 ## What to expect from a review

@@ -1,11 +1,12 @@
 # Continuous integration for RiftLab.
 #
-# Runs on every pull request and on main. The job name below - `tests` - is the
-# required status check listed in .github/rulesets/main.json, so renaming it
-# means editing that file too, or merges block forever on a check that never
-# reports. tests/test_repo.py compares the two and fails first.
+# Runs on every pull request and on main. The two job names below - `tests` and
+# `installer` - are the required status checks listed in
+# .github/rulesets/main.json, so renaming a job means editing that file too, or
+# merges block forever on a check that never reports. tests/test_repo.py
+# compares the two and fails first.
 #
-# The job runs on every pull request without a paths filter, on purpose: a
+# Both jobs run on every pull request without a paths filter, on purpose: a
 # required check that is skipped because a path did not match leaves the pull
 # request waiting for a report that never comes.
 name: CI
@@ -44,3 +45,41 @@ jobs:
         env:
           PYTHONPATH: .
         run: python -m pytest tests/ -q
+
+  installer:
+    name: installer
+    runs-on: windows-latest
+    needs: tests
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12.10"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt pyinstaller
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $m = Select-String -Path riftlab/__init__.py -Pattern '^__version__\s*=\s*"([^"]+)"'
+          "version=$($m.Matches[0].Groups[1].Value)" >> $env:GITHUB_OUTPUT
+
+      - uses: ./.github/actions/build-installer
+        with:
+          version: ${{ steps.version.outputs.version }}
+
+      # Not a release - a downloadable build of this branch, so a packaging
+      # change can be tried on a real machine before it is merged.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: RiftLab-Setup-${{ steps.version.outputs.version }}-${{ github.sha }}
+          path: dist/RiftLab-Setup-*.exe
+          if-no-files-found: error
+          retention-days: 14

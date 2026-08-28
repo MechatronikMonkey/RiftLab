@@ -41,24 +41,22 @@ Pull requests only, no direct pushes.
   requirement would block every merge while one person maintains this. The
   structure (branch → PR → check → merge) is in place regardless; raise this to
   `1` once a second person is actually working here, and nothing else changes.
-* `required_status_checks` with **`tests`** — the job name in
-  [`../workflows/ci.yml`](../workflows/ci.yml). If that job is ever renamed
-  without this file changing, pull requests wait forever on a check that no
-  longer exists; `tests/test_repo.py` compares the two and fails first.
+* `required_status_checks` with **`tests`** and **`installer`** — the job
+  names in [`../workflows/ci.yml`](../workflows/ci.yml). If a job is ever
+  renamed without this file changing, pull requests wait forever on a check that
+  no longer exists; `tests/test_repo.py` compares the two and fails first.
 * `strict_required_status_checks_policy` — a branch must be up to date with main
   before merging, so the checks that passed are the checks that matter.
 * `bypass_actors`: repository admins — an emergency route for a broken CI. Using
   it is recorded in Rule Insights.
-
-RiftRec requires two checks here (`tests` and `installer`); RiftLab has no
-installer, so there is one.
 
 ## `release-tags.json`
 
 `v*` tags cannot be moved, deleted or force-updated, and **nobody** can bypass
 it.
 
-A RiftLab release states which RiftRec schema version it reads. That is the
-sentence that lets a report say "these recordings were read with RiftLab 0.1.0"
-and have it mean something. If the tag can be repointed at a different commit,
-it stops meaning anything — and the study runs once.
+A RiftLab release states which RiftRec schema version it reads, and carries the
+installer people actually ran. That is what lets a report say "these recordings
+were read with RiftLab 0.1.0" and have it mean something. If the tag can be
+repointed at a different commit, it stops meaning anything — and the study runs
+once.

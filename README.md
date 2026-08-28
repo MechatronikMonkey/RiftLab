@@ -14,7 +14,26 @@ tools are coupled only by the file format.
 
 Two steps: **start** the viewer, then **open** a recorded session file.
 
-## 1 · Start the viewer
+## 1 · Install
+
+Download **`RiftLab-Setup-<version>.exe`** from the
+[Releases page](https://github.com/MechatronikMonkey/RiftLab/releases) and run it.
+That one file is everything — no Python, no pip. Installing needs no administrator
+rights: it goes into your own user account and adds a **RiftLab** entry to the Start
+menu.
+
+Windows will show **"Windows protected your PC"**, because the build is not
+code-signed yet: click **More info**, then **Run anyway**. Some antivirus products
+run an unknown installer in a sandbox first, so it can take a while to appear — or
+appear **twice**. Clicking through both is harmless.
+
+RiftLab never writes to a recording. It opens `.sqlite` files read-only, and
+uninstalling it does not touch them.
+
+> Working *on* RiftLab instead of just using it? Then skip the installer and run
+> it from a source checkout — see [For developers](#for-developers) below.
+
+## 2 · Start the viewer
 
 Open the **`RiftLab`** folder and double-click **`Start RiftLab.bat`**.
 
@@ -24,7 +43,7 @@ launch RiftLab installs what it needs, which takes a moment (needs internet);
 later launches start immediately. The window opens **empty** — that is correct,
 you pick the file to view yourself in the next step.
 
-## 2 · Open a session file
+## 3 · Open a session file
 
 Click **`Open .sqlite...`** (top left) and choose a recording. These are the
 `.sqlite` files that RiftRec wrote into its storage folder (one file can hold
@@ -51,7 +70,7 @@ duration and event count. Move the mouse over the panels and a **crosshair**
 follows it, with a readout (top right) of the time and the HR / RMSSD value at
 that moment.
 
-## 3 · Zoom, pan and read the data
+## 4 · Zoom, pan and read the data
 
 All three panels are linked on the time axis, so **any** zoom or pan moves all
 of them together:
@@ -62,7 +81,7 @@ of them together:
 - **Right-click → View All**, or press **Ctrl+0** — reset back to the full
   session.
 
-## 4 · Select a section and export a picture
+## 5 · Select a section and export a picture
 
 The **blue band** in the heart-rate panel marks a time window:
 

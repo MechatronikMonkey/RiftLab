@@ -10,10 +10,13 @@
 # pull request. This workflow refuses to build if the tag and __version__
 # disagree.
 #
-# Unlike RiftRec there is no installer to attach: RiftLab is run from a source
-# checkout, by people who edit it. A release here marks a state - above all
-# which RiftRec schema version it reads - so a recording and the tool that read
-# it can be named together in a thesis or a report.
+# The release carries an installer, like RiftRec's: RiftLab's dependency stack
+# (Qt, pyqtgraph, matplotlib, numpy) is the heavier of the two, so "just pip
+# install it" is exactly the step that fails on somebody else's machine. Anyone
+# who wants to CHANGE RiftLab works from a source checkout instead.
+#
+# A release also states which RiftRec schema version this build reads, so a
+# recording and the tool that read it can be named together in a report.
 name: Release
 
 on:
@@ -72,23 +75,50 @@ jobs:
           PYTHONPATH: .
         run: python -m pytest tests/ -q
 
+      - uses: ./.github/actions/build-installer
+        with:
+          version: ${{ steps.version.outputs.version }}
+
+      # Lets anyone check that the file they downloaded is the file that was
+      # built here - which matters more than usual while the build is unsigned.
+      - name: Checksum
+        id: checksum
+        shell: pwsh
+        run: |
+          $setup = "dist/RiftLab-Setup-${{ steps.version.outputs.version }}.exe"
+          $hash = (Get-FileHash $setup -Algorithm SHA256).Hash.ToLower()
+          "sha256=$hash" >> $env:GITHUB_OUTPUT
+          "$hash  $(Split-Path $setup -Leaf)" | Out-File "$setup.sha256" -Encoding ascii
+
       - name: Publish the release
         uses: softprops/action-gh-release@v2
         with:
           name: RiftLab ${{ steps.version.outputs.version }}
+          files: |
+            dist/RiftLab-Setup-*.exe
+            dist/RiftLab-Setup-*.exe.sha256
+          fail_on_unmatched_files: true
           generate_release_notes: true
           body: |
             Reads RiftRec recordings up to **schema v${{ steps.version.outputs.schema }}**.
 
-            ## Run it
+            ## Install
+
+            Download **RiftLab-Setup-${{ steps.version.outputs.version }}.exe** below and run it.
+            No Python and no pip needed on the target PC.
+
+            Windows shows **"Windows protected your PC"** because this build is not
+            code-signed yet: **More info → Run anyway**. Some antivirus products sandbox
+            an unknown installer first, so it can take a while to start or appear
+            **twice** — clicking through both is harmless.
+
+            `SHA256  ${{ steps.checksum.outputs.sha256 }}`
+
+            ## Or from source, to change it
 
             ```
             pip install -r requirements.txt
             python -m riftlab gui
             ```
-
-            Or double-click `Start RiftLab.bat`. RiftLab is run from a source
-            checkout on purpose — it is meant to be read and extended, not just
-            used.
 
             ---
