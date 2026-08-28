@@ -65,10 +65,13 @@ jobs:
             throw "This tag is not an ancestor of origin/main - release only from main."
           }
 
+      # pyinstaller belongs here too: this job runs the build-installer action,
+      # which shells out to it. Leaving it out is what broke the v0.1.0 release
+      # - the tests passed, then the freeze step could not find the command.
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          pip install -r requirements.txt pyinstaller pytest
 
       - name: Run the test suite
         env:

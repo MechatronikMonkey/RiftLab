@@ -125,3 +125,23 @@ def test_every_ruleset_is_valid_json_and_enforced() -> None:
         assert ruleset["name"]
         assert ruleset["target"] in ("branch", "tag"), path
         assert ruleset["enforcement"] == "active", path
+
+
+def test_every_job_that_builds_the_installer_installs_pyinstaller() -> None:
+    """What broke the v0.1.0 release: the release job ran the build-installer
+    action without having installed the tool the action shells out to. The tests
+    passed first, so the failure came late and cost a version number - a tag
+    cannot be moved once it exists, which is the point of protecting it.
+
+    Checking "both workflows use the action" was not enough; this checks that
+    both can actually run it.
+    """
+    for name, workflow in (("ci.yml", CI), ("release.yml", RELEASE)):
+        if "./.github/actions/build-installer" not in workflow:
+            continue
+        # The actual install commands, not the whole file - a comment
+        # mentioning pyinstaller must not satisfy this.
+        installs = [line for line in workflow.splitlines() if "pip install" in line]
+        assert any("pyinstaller" in line for line in installs), (
+            f"{name} runs the build-installer action but never installs "
+            f"pyinstaller; its pip lines are {installs}")

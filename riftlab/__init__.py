@@ -6,7 +6,7 @@ delivers the demo viewer (EW-31/36): heart rate and HRV over the match timeline
 with marked game events.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 # Highest RiftRec schema version this reader understands.
 #
