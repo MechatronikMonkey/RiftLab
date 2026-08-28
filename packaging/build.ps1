@@ -58,6 +58,18 @@ if (-not (Test-Path $py)) {
     python -m venv $venv
     if (-not $?) { throw "Could not create the build virtualenv" }
 }
+# A release is built by the interpreter named in .python-version. A local
+# build on a different one is fine for trying something out, but it is not the
+# same artefact - so say so rather than let the difference go unnoticed.
+$pinFile = Join-Path $root ".python-version"
+if (Test-Path $pinFile) {
+    $pinned = (Get-Content $pinFile -Raw).Trim()
+    $local = (& $py -c "import sys; print('.'.join(map(str, sys.version_info[:3])))").Trim()
+    if ($local -ne $pinned) {
+        Write-Warning "Building with Python $local; releases are built with $pinned (.python-version). The result will differ from the released installer."
+    }
+}
+
 Step "Installing build dependencies"
 & $py -m pip install --disable-pip-version-check --quiet --upgrade pip
 

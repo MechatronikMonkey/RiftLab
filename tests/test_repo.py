@@ -90,17 +90,23 @@ def test_both_workflows_run_the_test_suite() -> None:
         assert "pytest tests/" in workflow
 
 
-def test_the_interpreter_is_pinned_to_a_patch_version() -> None:
+def test_the_interpreter_is_pinned_to_one_patch_version_in_one_place() -> None:
     """"3.12" floats: the same tag rebuilt months later runs on a different
-    interpreter. An analysis tool for a study has to stay reproducible."""
+    interpreter and produces a different binary. The version lives in
+    .python-version so there is one thing to raise, not three."""
+    pin = (ROOT / ".python-version").read_text(encoding="utf-8").strip()
+    assert re.fullmatch(r"\d+\.\d+\.\d+", pin), pin
+
     for workflow in (CI, RELEASE):
-        versions = re.findall(r'python-version:\s*"([^"]+)"', workflow)
-        assert versions, workflow[:80]
-        for v in versions:
-            assert re.fullmatch(r"\d+\.\d+\.\d+", v), v
+        assert "python-version-file: .python-version" in workflow
+        # no workflow may carry its own copy of the number
+        assert not re.search(r'python-version:\s*"', workflow), workflow[:80]
+
+    build = (ROOT / "packaging" / "build.ps1").read_text(encoding="utf-8")
+    assert ".python-version" in build, "the local build does not know the pin"
 
 
-def test_the_two_workflows_agree_on_python_and_action_versions() -> None:
+def test_the_two_workflows_agree_on_action_versions() -> None:
     """One bumped and the other forgotten is how a release starts failing on a
     runner change, months after CI stopped warning about it."""
     def used(workflow: str) -> dict:
@@ -111,9 +117,6 @@ def test_the_two_workflows_agree_on_python_and_action_versions() -> None:
     assert shared, "the two workflows share no actions at all - one is misparsed"
     for action in sorted(shared):
         assert ci[action] == release[action], (action, ci[action], release[action])
-
-    pythons = {re.findall(r'python-version:\s*"([^"]+)"', w)[0] for w in (CI, RELEASE)}
-    assert len(pythons) == 1, pythons
 
 
 def test_every_ruleset_is_valid_json_and_enforced() -> None:
