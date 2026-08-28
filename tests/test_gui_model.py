@@ -24,7 +24,9 @@ from riftlab.gui.model import (
     session_header,
     session_label,
 )
-from riftlab.loader import EventMark, SessionData, SessionInfo, list_sessions
+from riftlab.loader import (
+    EventMark, Gap, SessionData, SessionInfo, list_sessions,
+)
 
 _SCHEMA = """
 CREATE TABLE session (session_id TEXT PRIMARY KEY, participant_id TEXT,
@@ -223,3 +225,65 @@ if __name__ == "__main__":
             fn()
             print(f"OK - {name}")
     print("OK - all gui model tests passed")
+
+
+# -- Gap bands: the stretches that are not data ----------------------------
+
+def _session_with(gaps, duration_s: float = 100.0) -> SessionData:
+    """A minimal session whose duration comes from one HR sample."""
+    return SessionData(
+        session_id="s", participant_id="P01", session_index=1,
+        started_utc="2026-08-28T10:00:00+00:00", schema_version=4,
+        hr_t=np.array([0.0, duration_s]), hr_bpm=np.array([70.0, 75.0]),
+        rr_t=np.empty(0), rr_ms=np.empty(0), gaps=gaps,
+    )
+
+
+def test_a_closed_gap_becomes_one_band() -> None:
+    from riftlab.gui.model import gap_bands
+
+    band, = gap_bands(_session_with([Gap("h10_contact", 10.0, 40.0)]))
+    assert (band.start_t_s, band.end_t_s) == (10.0, 40.0)
+    assert band.source == "h10_contact"
+    assert "not usable" in band.label
+
+
+def test_a_gap_that_never_closed_is_drawn_to_the_end_of_the_session() -> None:
+    """The strap dropped and stayed away. That stretch is exactly as unusable
+    as a closed one, so leaving it undrawn would be the wrong kind of tidy."""
+    from riftlab.gui.model import gap_bands
+
+    band, = gap_bands(_session_with([Gap("h10", 60.0, None)], duration_s=100.0))
+    assert band.end_t_s == 100.0
+
+
+def test_lost_contact_is_shaded_more_strongly_than_a_disconnect() -> None:
+    """A disconnect leaves a visible hole in the curve. Lost contact does not -
+    it keeps drawing plausible values - so it has to shout louder."""
+    from riftlab.gui.model import gap_bands
+
+    contact, = gap_bands(_session_with([Gap("h10_contact", 1.0, 2.0)]))
+    drop, = gap_bands(_session_with([Gap("h10", 1.0, 2.0)]))
+    assert contact.alpha > drop.alpha
+
+
+def test_an_unknown_gap_source_is_still_drawn() -> None:
+    """A future RiftRec may write a source this version has never heard of.
+    Silently dropping it would hide exactly the thing gaps exist to show."""
+    from riftlab.gui.model import gap_bands
+
+    band, = gap_bands(_session_with([Gap("something_new", 5.0, 9.0)]))
+    assert band.color and 0.0 < band.alpha < 1.0
+    assert band.label == "something_new"
+
+
+def test_a_zero_length_gap_is_skipped() -> None:
+    from riftlab.gui.model import gap_bands
+
+    assert gap_bands(_session_with([Gap("h10", 20.0, 20.0)])) == []
+
+
+def test_a_session_without_gaps_has_no_bands() -> None:
+    from riftlab.gui.model import gap_bands
+
+    assert gap_bands(_session_with([])) == []

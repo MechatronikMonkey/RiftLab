@@ -14,7 +14,7 @@ import numpy as np
 
 from ..loader import SessionData, SessionInfo
 from ..metrics import rolling_rmssd
-from ..plot import _EVENT_DEF, _ROWS, _norm, classify
+from ..plot import _EVENT_DEF, _ROWS, GapBand, _norm, classify, gap_bands
 
 # RMSSD rolling-window bounds offered by the GUI spinbox.
 RMSSD_WINDOW_MIN = 3
