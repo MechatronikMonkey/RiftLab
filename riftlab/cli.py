@@ -23,12 +23,12 @@ from .plot import render_to_file, show
 # reached once a window opens or a chart is drawn. A frozen build that is
 # missing one of these shows a window that never appears - and nothing else.
 _RUNTIME_MODULES = (
-    "sqlite3", "json", "zlib", "datetime", "dataclasses",
+    "sqlite3", "json", "zlib", "datetime", "dataclasses", "configparser",
     "numpy",
     "PySide6.QtCore", "PySide6.QtGui", "PySide6.QtWidgets",
     "pyqtgraph", "pyqtgraph.exporters",
     "matplotlib", "matplotlib.pyplot",
-    "riftlab.loader", "riftlab.metrics", "riftlab.plot",
+    "riftlab.loader", "riftlab.metrics", "riftlab.plot", "riftlab.recordings",
     "riftlab.gui.model", "riftlab.gui.app",
 )
 

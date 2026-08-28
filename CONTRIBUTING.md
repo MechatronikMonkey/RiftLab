@@ -14,10 +14,18 @@ quietly misrepresent what is in the file.**
    `tests/test_loader.py`. A single raw payload contains the Riot IDs of ten
    people, nine of whom never consented to anything.
 2. **RiftLab never imports RiftRec.** The SQLite schema
-   (`RiftRec/riftrec/storage/schema.sql`) is the *entire* coupling between the
-   two repositories, and the tests prove it by rebuilding that schema by hand.
-   If RiftLab needed RiftRec's code, the two would have to be released together
+   (`RiftRec/riftrec/storage/schema.sql`) is the coupling between the two
+   repositories, and the tests prove it by rebuilding that schema by hand. If
+   RiftLab needed RiftRec's code, the two would have to be released together
    forever.
+
+   There is exactly **one** other thing RiftLab knows about RiftRec, and it is
+   deliberately a *hint*, not a dependency: `riftlab/recordings.py` reads the
+   storage folder out of `%APPDATA%\RiftRec\prefs.ini` so the "Open .sqlite"
+   dialog starts where the recordings are. Every way of failing to read it -
+   not installed, never run, corrupt file, renamed key, folder deleted - ends in
+   a fallback, never an error, and RiftLab never writes to that file. Keep any
+   future coupling to that standard or do not add it.
 3. **Recordings are opened read-only** (`mode=ro`) and are never migrated,
    rewritten or "repaired". A recording is evidence. If a file is odd, the
    analysis says so — it does not fix it.

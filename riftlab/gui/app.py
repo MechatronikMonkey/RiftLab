@@ -46,6 +46,7 @@ from PySide6.QtWidgets import (
 
 from .. import SUPPORTED_SCHEMA_VERSION
 from ..loader import SessionData, SessionInfo, list_sessions, load_session
+from ..recordings import default_open_dir
 from ..plot import _ROW_LABELS, gap_bands
 from .model import (
     EventMarker,
@@ -216,8 +217,13 @@ class MainWindow(QMainWindow):
 
     # -- file / session selection -------------------------------------------
     def _choose_file(self) -> None:
+        # Start where the recordings are, not in whatever Qt considers the
+        # current directory. On the first open of the day that is the folder
+        # RiftRec saves into - the user should not have to remember a path they
+        # chose in the other program weeks ago.
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open RiftRec session", "", "SQLite session (*.sqlite);;All files (*)"
+            self, "Open RiftRec session", default_open_dir(self._db_path),
+            "SQLite session (*.sqlite);;All files (*)"
         )
         if path:
             self.load_file(path)
