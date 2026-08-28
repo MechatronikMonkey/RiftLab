@@ -46,7 +46,8 @@ from PySide6.QtWidgets import (
 
 from .. import SUPPORTED_SCHEMA_VERSION
 from ..loader import SessionData, SessionInfo, list_sessions, load_session
-from ..plot import _ROW_LABELS
+from ..recordings import default_open_dir
+from ..plot import _ROW_LABELS, gap_bands
 from .model import (
     EventMarker,
     HrPlotModel,
@@ -216,8 +217,13 @@ class MainWindow(QMainWindow):
 
     # -- file / session selection -------------------------------------------
     def _choose_file(self) -> None:
+        # Start where the recordings are, not in whatever Qt considers the
+        # current directory. On the first open of the day that is the folder
+        # RiftRec saves into - the user should not have to remember a path they
+        # chose in the other program weeks ago.
         path, _ = QFileDialog.getOpenFileName(
-            self, "Open RiftRec session", "", "SQLite session (*.sqlite);;All files (*)"
+            self, "Open RiftRec session", default_open_dir(self._db_path),
+            "SQLite session (*.sqlite);;All files (*)"
         )
         if path:
             self.load_file(path)
@@ -276,10 +282,30 @@ class MainWindow(QMainWindow):
         for p in (self._p_hr, self._p_hrv, self._p_ev):
             p.clear()
 
+    def _draw_gaps(self, data: SessionData) -> None:
+        """Shade the stretches the recorder marked as not usable.
+
+        Behind the curves and outside the auto-range, so they inform without
+        moving anything. Hovering names the reason. A lost skin contact draws a
+        flat, entirely plausible heart rate - the shading is the only thing that
+        separates "the player was calm" from "the strap was not reading".
+        """
+        for band in gap_bands(data):
+            fill = pg.mkBrush(band.color + f"{int(band.alpha * 255):02x}")
+            for panel in (self._p_hr, self._p_hrv, self._p_ev):
+                region = pg.LinearRegionItem(
+                    values=(band.start_t_s, band.end_t_s),
+                    brush=fill, pen=pg.mkPen(None), movable=False,
+                )
+                region.setZValue(-20)
+                region.setToolTip(band.label)
+                panel.addItem(region, ignoreBounds=True)
+
     def _draw(self, data: SessionData) -> None:
         self._clear_panels()
         self._data = data
 
+        self._draw_gaps(data)
         hr = hr_plot_model(data)
         hrv = hrv_plot_model(data, window=self._rmssd_window)
         markers = event_markers(data)

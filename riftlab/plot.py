@@ -17,10 +17,11 @@ split into kill / death / assist relative to the active player.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
-from .loader import EventMark, SessionData
+from .loader import EventMark, SessionData, normalise_name as _norm
 from .metrics import rolling_rmssd
 
 _ASSET_DIR = Path(__file__).parent / "assets" / "events"
@@ -65,9 +66,56 @@ _SIMPLE_MAP = {
 }
 
 
-def _norm(name: Optional[str]) -> str:
-    """Normalise a Riot name to the lowercased game name (drop the #TAG)."""
-    return (name or "").split("#")[0].strip().lower()
+# How each kind of gap is shaded. `h10_contact` is the loudest on purpose: it
+# is the only one where the curve keeps drawing plausible values that are not
+# measurements. A disconnected strap merely leaves a hole, which is visible on
+# its own.
+GAP_STYLE: dict[str, tuple[str, float]] = {
+    "h10_contact": ("#d62728", 0.16),
+    "h10": ("#7f7f7f", 0.12),
+    "riot": ("#2c7fb8", 0.10),
+}
+_GAP_FALLBACK = ("#7f7f7f", 0.10)
+
+
+@dataclass(frozen=True)
+class GapBand:
+    """A shaded stretch that must not be read as data.
+
+    Without this the viewer draws a lost skin contact as a flat, entirely
+    plausible heart-rate plateau - and a flat line on a calm level is exactly
+    what a relaxed player looks like. The recorder already knows the difference
+    and writes it into `gap`; drawing it is what stops the reader drawing the
+    wrong conclusion.
+    """
+
+    start_t_s: float
+    end_t_s: float
+    source: str
+    color: str
+    alpha: float
+    label: str
+
+
+def gap_bands(data: SessionData) -> list[GapBand]:
+    """Turn the recorder's gap rows into drawable bands (pure).
+
+    A gap that never closed - the strap dropped and stayed away - is drawn to
+    the end of the session rather than skipped, because that stretch is exactly
+    as unusable as a closed one.
+    """
+    end_of_session = max(data.duration_s, 0.0)
+    bands: list[GapBand] = []
+    for gap in data.gaps:
+        stop = end_of_session if gap.end_t_s is None else gap.end_t_s
+        if stop <= gap.start_t_s:
+            continue                 # zero-length or malformed - nothing to draw
+        color, alpha = GAP_STYLE.get(gap.source, _GAP_FALLBACK)
+        bands.append(GapBand(
+            start_t_s=gap.start_t_s, end_t_s=stop, source=gap.source,
+            color=color, alpha=alpha, label=gap.label,
+        ))
+    return bands
 
 
 def classify(ev: EventMark, active_norm: str) -> Optional[str]:
@@ -143,6 +191,20 @@ def make_figure(data: SessionData, rmssd_window: int = 10,
         ax_hrv.legend(loc="upper right", fontsize=8)
     ax_hrv.set_ylabel("HRV RMSSD (ms)")
     ax_hrv.grid(True, alpha=0.25)
+
+    # -- Gaps: the stretches that are not data ----------------------------
+    # Drawn behind everything, so the curve stays readable while the shading
+    # says "do not trust this part". Each kind is labelled once.
+    labelled: set[str] = set()
+    for band in gap_bands(data):
+        first = band.source not in labelled
+        labelled.add(band.source)
+        for ax in (ax_hr, ax_hrv, ax_ev):
+            ax.axvspan(band.start_t_s, band.end_t_s, color=band.color,
+                       alpha=band.alpha, lw=0, zorder=0,
+                       label=band.label if (first and ax is ax_hr) else None)
+    if labelled:
+        ax_hr.legend(loc="upper left", fontsize=8)
 
     # -- Event timeline + vertical markers across ALL three panels -------
     # Stagger events that fall close together in the same row vertically, so

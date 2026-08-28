@@ -17,4 +17,9 @@ __version__ = "0.1.0"
 #            the "display may be incomplete" warning would be misleading.
 #            Raise this again only after checking that the tables read here
 #            still carry what the reader expects.
-SUPPORTED_SCHEMA_VERSION = 3
+# 4 (EW-61): `game_snapshot` gained `is_dead` and `respawn_timer_s`, sampled
+#            every 5 s so the respawn timer exists at the moment of death -
+#            the variable the primary hypothesis filters on. Additive again,
+#            and this reader now uses both, along with the `gap` table that
+#            marks stretches where a signal was not usable.
+SUPPORTED_SCHEMA_VERSION = 4

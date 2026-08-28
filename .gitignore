@@ -15,3 +15,12 @@ venv/
 *.png
 # ...aber die versionierten Event-Icons behalten
 !riftlab/assets/**/*.png
+
+# Build output (packaging/build.ps1). The frozen folder and the installer are
+# release artefacts - they come from a tag, never from the repository.
+dist/
+build/
+.venv-build/
+# The icon is generated from the viewer's palette on every build (make_icon.py),
+# so the repository stays free of binary assets.
+packaging/*.ico
