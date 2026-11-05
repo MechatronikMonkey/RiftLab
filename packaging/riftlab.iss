@@ -15,7 +15,7 @@
 #ifndef AppVersion
   ; Fallback for a bare ISCC run. tests/test_packaging.py keeps this in step
   ; with riftlab.__version__, so an unversioned build is never mislabelled.
-  #define AppVersion "0.1.1"
+  #define AppVersion "0.2.0"
 #endif
 
 #define AppName "RiftLab"
