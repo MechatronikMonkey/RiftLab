@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
 from .. import SUPPORTED_SCHEMA_VERSION
 from ..loader import SessionData, SessionInfo, list_sessions, load_session
 from ..recordings import default_open_dir
-from ..plot import _ROW_LABELS, gap_bands
+from ..plot import _ROW_LABELS, gap_bands, rest_bands
 from .model import (
     EventMarker,
     HrPlotModel,
@@ -56,6 +56,7 @@ from .model import (
     RMSSD_WINDOW_MIN,
     axis_bounds,
     default_region,
+    default_session_index,
     event_markers,
     hr_plot_model,
     hrv_plot_model,
@@ -229,7 +230,7 @@ class MainWindow(QMainWindow):
             self.load_file(path)
 
     def load_file(self, path: str | Path) -> None:
-        """Open a file, populate the session dropdown, show the first session."""
+        """Open a file, populate the session dropdown, show the latest match."""
         self._db_path = Path(path)
         self._sessions = list_sessions(self._db_path)
 
@@ -238,7 +239,7 @@ class MainWindow(QMainWindow):
         for info in self._sessions:
             self._session_box.addItem(session_label(info), info.session_id)
         self._session_box.setEnabled(bool(self._sessions))
-        self._session_box.setCurrentIndex(0 if self._sessions else -1)
+        self._session_box.setCurrentIndex(default_session_index(self._sessions))
         self._session_box.blockSignals(False)
 
         if self._sessions:
@@ -271,9 +272,10 @@ class MainWindow(QMainWindow):
                 f"v{SUPPORTED_SCHEMA_VERSION}; display may be incomplete."
             )
         else:
+            what = ("between matches, no game data" if data.is_idle
+                    else f"{len(data.events)} events")
             self.statusBar().showMessage(
-                f"{self._db_path.name} - {data.hr_bpm.size} HR samples, "
-                f"{len(data.events)} events"
+                f"{self._db_path.name} - {data.hr_bpm.size} HR samples, {what}"
             )
         self._draw(data)
 
@@ -291,21 +293,42 @@ class MainWindow(QMainWindow):
         separates "the player was calm" from "the strap was not reading".
         """
         for band in gap_bands(data):
-            fill = pg.mkBrush(band.color + f"{int(band.alpha * 255):02x}")
-            for panel in (self._p_hr, self._p_hrv, self._p_ev):
-                region = pg.LinearRegionItem(
-                    values=(band.start_t_s, band.end_t_s),
-                    brush=fill, pen=pg.mkPen(None), movable=False,
-                )
-                region.setZValue(-20)
-                region.setToolTip(band.label)
-                panel.addItem(region, ignoreBounds=True)
+            self._shade(band.start_t_s, band.end_t_s, band.color, band.alpha,
+                        band.label)
+
+    def _draw_rest(self, data: SessionData) -> None:
+        """Shade the check-in's resting measurement (schema 5) like a gap, but
+        green, with its label written at the top of the HR panel so the
+        baseline can be found without hovering."""
+        for band in rest_bands(data):
+            hr_region = self._shade(band.start_t_s, band.end_t_s, band.color,
+                                    band.alpha, band.label)
+            # inside the band, top left (the default anchors flip sides)
+            pg.InfLineLabel(hr_region.lines[0], band.label, position=0.95,
+                            anchors=[(0, 0), (0, 0)], color=band.color)
+
+    def _shade(self, start: float, end: float, color: str, alpha: float,
+               tip: str) -> "pg.LinearRegionItem":
+        """One shaded stretch across all three panels, behind the curves and
+        outside the auto-range. Returns the HR panel's region."""
+        fill = pg.mkBrush(color + f"{int(alpha * 255):02x}")
+        regions = []
+        for panel in (self._p_hr, self._p_hrv, self._p_ev):
+            region = pg.LinearRegionItem(
+                values=(start, end), brush=fill, pen=pg.mkPen(None), movable=False,
+            )
+            region.setZValue(-20)
+            region.setToolTip(tip)
+            panel.addItem(region, ignoreBounds=True)
+            regions.append(region)
+        return regions[0]
 
     def _draw(self, data: SessionData) -> None:
         self._clear_panels()
         self._data = data
 
         self._draw_gaps(data)
+        self._draw_rest(data)
         hr = hr_plot_model(data)
         hrv = hrv_plot_model(data, window=self._rmssd_window)
         markers = event_markers(data)

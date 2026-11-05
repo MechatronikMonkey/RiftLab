@@ -287,3 +287,142 @@ def test_a_session_without_gaps_has_no_bands() -> None:
     from riftlab.gui.model import gap_bands
 
     assert gap_bands(_session_with([])) == []
+
+
+# -- Schema v5: between-match recordings and the resting window -------------
+
+def _idle_info(started: str = "2026-10-14T17:42:10+00:00",
+               ended: str | None = "2026-10-14T18:05:50+00:00",
+               offset: int | None = 120) -> SessionInfo:
+    return SessionInfo(session_id="i", session_index=None, participant_id="P01",
+                       started_utc=started, kind="idle", ended_utc=ended,
+                       utc_offset_min=offset)
+
+
+def test_an_idle_session_is_labelled_with_its_local_clock_span() -> None:
+    from riftlab.gui.model import session_label
+
+    # 17:42 UTC at UTC+2 is 19:42 on the participant's clock
+    assert session_label(_idle_info()) == "between matches · 19:42–20:05"
+
+
+def test_without_an_offset_the_idle_label_says_it_is_utc() -> None:
+    from riftlab.gui.model import session_label
+
+    assert session_label(_idle_info(offset=None)) == "between matches · 17:42–18:05 UTC"
+
+
+def test_an_idle_session_never_closed_shows_only_its_start() -> None:
+    from riftlab.gui.model import session_label
+
+    assert session_label(_idle_info(ended=None)) == "between matches · from 19:42"
+
+
+def test_a_negative_offset_and_midnight_are_handled() -> None:
+    from riftlab.gui.model import clock_time
+
+    assert clock_time("2026-10-14T23:30:00+00:00", 60) == "00:30"
+    assert clock_time("2026-10-14T02:15:00+00:00", -300) == "21:15"
+    assert clock_time("2026-10-14T17:42:00+00:00", 0) == "17:42"
+    assert clock_time(None, 60) is None
+    assert clock_time("not a time", 60) is None
+
+
+def test_a_match_label_without_offset_stays_utc() -> None:
+    info = SessionInfo(session_id="x", session_index=3, participant_id="P01",
+                       started_utc="2026-07-06T17:27:51+00:00", kind="match")
+    assert session_label(info) == "#3 - P01 - 2026-07-06 17:27:51"
+
+
+def test_the_dropdown_opens_on_the_latest_match() -> None:
+    from riftlab.gui.model import default_session_index
+
+    def info(sid, kind, idx, started):
+        return SessionInfo(session_id=sid, session_index=idx, participant_id="P01",
+                           started_utc=started, kind=kind)
+
+    # as list_sessions orders them: matches by index, then idle by start
+    infos = [
+        info("m1", "match", 1, "2026-10-14T17:42:00+00:00"),
+        info("m2", "match", 2, "2026-10-14T18:15:00+00:00"),
+        info("i1", "idle", None, "2026-10-14T17:30:00+00:00"),
+        info("i3", "idle", None, "2026-10-14T18:45:00+00:00"),   # the latest overall
+    ]
+    assert default_session_index(infos) == 1
+    assert default_session_index([infos[2], infos[3]]) == 1     # no match: latest
+    assert default_session_index([]) == -1
+
+
+def _idle_data(rest_windows, duration_s: float = 600.0) -> SessionData:
+    return SessionData(
+        session_id="i", participant_id="P01", session_index=None,
+        started_utc="2026-10-14T17:30:00+00:00", schema_version=5,
+        hr_t=np.array([0.0, duration_s]), hr_bpm=np.array([66.0, 70.0]),
+        rr_t=np.array([0.0, 1.0, 2.0]), rr_ms=np.array([900.0, 910.0, 905.0]),
+        kind="idle", utc_offset_min=120, rest_windows=rest_windows,
+    )
+
+
+def test_an_idle_session_is_titled_as_between_matches() -> None:
+    data = _idle_data([])
+    assert "between matches" in hr_plot_model(data).title
+    assert "session None" not in hr_plot_model(data).title
+    h = session_header(data)
+    assert "between matches" in h and "events" not in h
+    assert event_markers(data) == []
+    assert hrv_plot_model(data).has_data
+
+
+def test_a_completed_rest_window_is_one_labelled_band() -> None:
+    from riftlab.gui.model import rest_bands
+    from riftlab.loader import RestWindow
+
+    band, = rest_bands(_idle_data([RestWindow("completed", 300.0, 360.0)]))
+    assert (band.start_t_s, band.end_t_s) == (300.0, 360.0)
+    assert band.label == "rest 60 s"
+    assert band.status == "completed"
+
+
+def test_an_aborted_rest_is_fainter_and_says_so() -> None:
+    from riftlab.gui.model import rest_bands
+    from riftlab.loader import RestWindow
+
+    done, = rest_bands(_idle_data([RestWindow("completed", 300.0, 360.0)]))
+    aborted, = rest_bands(_idle_data([RestWindow("aborted", 300.0, 322.4)]))
+    skipped, = rest_bands(_idle_data([RestWindow("skipped", 300.0, 305.0)]))
+    assert aborted.label == "rest aborted after 22 s"
+    assert skipped.label == "rest skipped after 5 s"
+    assert aborted.alpha < done.alpha and skipped.alpha < done.alpha
+
+
+def test_a_rest_window_is_clipped_to_the_session_but_labelled_by_its_length() -> None:
+    """Straddling the end of the session: draw only what lies inside it, but
+    the label still reports what was measured."""
+    from riftlab.gui.model import rest_bands
+    from riftlab.loader import RestWindow
+
+    band, = rest_bands(_idle_data([RestWindow("completed", 570.0, 630.0)],
+                                  duration_s=600.0))
+    assert (band.start_t_s, band.end_t_s) == (570.0, 600.0)
+    assert band.label == "rest 60 s"
+
+
+def test_rest_windows_without_an_end_or_outside_the_session_are_not_drawn() -> None:
+    """No end means the recorder did not say how long it ran - a guessed 60 s
+    would be drawn as if it had been measured."""
+    from riftlab.gui.model import rest_bands
+    from riftlab.loader import RestWindow
+
+    assert rest_bands(_idle_data([
+        RestWindow("aborted", 100.0, None),
+        RestWindow("completed", 700.0, 760.0),     # after the 600 s session
+        RestWindow("completed", -90.0, -30.0),     # before it
+        RestWindow("completed", 50.0, 50.0),       # zero length
+    ])) == []
+
+
+def test_match_label_uses_the_same_local_clock_as_idle_rows() -> None:
+    match = SessionInfo(session_id="m", session_index=1, participant_id="P01",
+                        started_utc="2026-10-26T18:30:00+00:00",
+                        kind="match", utc_offset_min=60)
+    assert session_label(match) == "#1 - P01 - 2026-10-26 19:30:00"

@@ -6,7 +6,7 @@ delivers the demo viewer (EW-31/36): heart rate and HRV over the match timeline
 with marked game events.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
 
 # Highest RiftRec schema version this reader understands.
 #
@@ -22,4 +22,11 @@ __version__ = "0.1.1"
 #            the variable the primary hypothesis filters on. Additive again,
 #            and this reader now uses both, along with the `gap` table that
 #            marks stretches where a signal was not usable.
-SUPPORTED_SCHEMA_VERSION = 4
+# 5 (RiftRec 0.2.0): heart rate is recorded from the moment the strap
+#            connects, so the stretches between matches are sessions of their
+#            own (`session.kind = 'idle'`, no game rows, no session_index).
+#            `session.utc_offset_min` gives the local time, and the new
+#            `checkin` table holds the daily questionnaire plus a 60 s resting
+#            measurement - this reader uses only the resting window from it.
+#            Additive: a file without these is an all-match file as before.
+SUPPORTED_SCHEMA_VERSION = 5
