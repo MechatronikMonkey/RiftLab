@@ -71,16 +71,51 @@ class DeathEpisode:
 
 
 @dataclass(frozen=True)
+class RestWindow:
+    """The 60 s resting measurement of a daily check-in (RiftRec schema 5).
+
+    Its heart rate is not stored separately - it is simply the stretch
+    [start, end] of whatever session was running, normally the idle one before
+    the first match. `status` is 'completed', 'aborted' or 'skipped' (None if
+    the recorder never wrote one); only a completed window is a full resting
+    measurement.
+    """
+
+    status: Optional[str]
+    start_t_s: float               # seconds since session start
+    end_t_s: Optional[float]       # None = the recorder wrote no end
+
+
+# session.kind values. A file written before schema 5 has no `kind` column and
+# holds nothing but matches, so a missing or NULL kind means a match.
+KIND_MATCH = "match"
+KIND_IDLE = "idle"
+
+
+def _kind(raw: Optional[str]) -> str:
+    return raw or KIND_MATCH
+
+
+@dataclass(frozen=True)
 class SessionInfo:
     """Lightweight session header for pickers - no sample arrays are read."""
     session_id: str
     session_index: Optional[int]
     participant_id: Optional[str]
     started_utc: str
+    kind: str = KIND_MATCH
+    ended_utc: Optional[str] = None
+    utc_offset_min: Optional[int] = None   # minutes east of UTC; None before v5
+
+    @property
+    def is_idle(self) -> bool:
+        """Heart rate recorded between matches - no game data in it."""
+        return self.kind == KIND_IDLE
 
 
 def list_sessions(db_path: str | Path) -> list[SessionInfo]:
-    """List the sessions in a file, ordered by session_index (then start time).
+    """List the sessions in a file: matches first, by session_index (then start
+    time), followed by the between-match recordings by start time.
 
     Reads only the `session` table so a multi-session file can be offered in a
     dropdown without loading every sample.
@@ -88,21 +123,51 @@ def list_sessions(db_path: str | Path) -> list[SessionInfo]:
     conn = sqlite3.connect(f"file:{Path(db_path)}?mode=ro", uri=True)
     try:
         conn.row_factory = sqlite3.Row
+        # kind and utc_offset_min arrived with schema 5; select NULL for
+        # whatever an older file does not have.
+        cols = _columns(conn, "session")
+        optional = ", ".join(
+            name if name in cols else f"NULL AS {name}"
+            for name in ("kind", "ended_utc", "utc_offset_min")
+        )
         rows = conn.execute(
-            "SELECT session_id, session_index, participant_id, started_utc "
-            "FROM session ORDER BY session_index IS NULL, session_index, started_utc"
+            "SELECT session_id, session_index, participant_id, started_utc, "
+            f"{optional} FROM session"
         ).fetchall()
-        return [
+        infos = [
             SessionInfo(
                 session_id=r["session_id"],
                 session_index=r["session_index"],
                 participant_id=r["participant_id"],
                 started_utc=r["started_utc"],
+                kind=_kind(r["kind"]),
+                ended_utc=r["ended_utc"],
+                utc_offset_min=r["utc_offset_min"],
             )
             for r in rows
         ]
+        return sorted(infos, key=lambda i: (
+            i.is_idle,
+            i.session_index is None,
+            i.session_index if i.session_index is not None else 0,
+            i.started_utc or "",
+        ))
     finally:
         conn.close()
+
+
+def default_session(infos: list[SessionInfo]) -> Optional[SessionInfo]:
+    """The session to show when none was chosen: the latest match.
+
+    A schema 5 file usually *ends* on an idle stretch (the heart rate after the
+    last game), so "most recently started" would open on a recording without a
+    single game event. Only a file that holds no match at all falls back to the
+    latest session of any kind. None for an empty list.
+    """
+    if not infos:
+        return None
+    matches = [i for i in infos if not i.is_idle]
+    return max(matches or infos, key=lambda i: i.started_utc or "")
 
 
 @dataclass
@@ -120,6 +185,14 @@ class SessionData:
     active_riot_id: Optional[str] = None
     gaps: list[Gap] = field(default_factory=list)
     deaths: list[DeathEpisode] = field(default_factory=list)
+    kind: str = KIND_MATCH
+    utc_offset_min: Optional[int] = None
+    rest_windows: list[RestWindow] = field(default_factory=list)
+
+    @property
+    def is_idle(self) -> bool:
+        """Heart rate recorded between matches - no game data in it."""
+        return self.kind == KIND_IDLE
 
     @property
     def duration_s(self) -> float:
@@ -174,6 +247,36 @@ def _read_gaps(conn, sid: str, started_utc: str) -> list[Gap]:
             continue
         out.append(Gap(source=r["source"], start_t_s=start,
                        end_t_s=_seconds_since(started_utc, r["end_utc"])))
+    return out
+
+
+def _read_rest_windows(conn, started_utc: str,
+                       ended_utc: Optional[str]) -> list[RestWindow]:
+    """Resting measurements that fall into this session's time span.
+
+    Matched by time, not by `checkin.session_id`: that column may be NULL, and
+    the time axis is what the shading is drawn on anyway. Sessions in one file
+    follow each other without overlapping, so a window lands in the session
+    that was running while it was measured. A session that was never closed
+    (`ended_utc` NULL) counts as open-ended.
+    """
+    if not {"rest_status", "rest_start_utc", "rest_end_utc"} <= _columns(conn, "checkin"):
+        return []           # written before RiftRec schema v5
+    session_end = _seconds_since(started_utc, ended_utc)
+    out: list[RestWindow] = []
+    for r in conn.execute(
+        "SELECT rest_status, rest_start_utc, rest_end_utc FROM checkin "
+        "WHERE rest_start_utc IS NOT NULL ORDER BY rest_start_utc"
+    ):
+        start = _seconds_since(started_utc, r["rest_start_utc"])
+        if start is None:
+            continue
+        end = _seconds_since(started_utc, r["rest_end_utc"])
+        if (end if end is not None else start) < 0.0:
+            continue        # entirely before this session
+        if session_end is not None and start > session_end:
+            continue        # entirely after it
+        out.append(RestWindow(status=r["rest_status"], start_t_s=start, end_t_s=end))
     return out
 
 
@@ -254,18 +357,19 @@ def _read_deaths(conn, sid: str, anchor: int, started_utc: str,
 
 
 def load_session(db_path: str | Path, session_id: Optional[str] = None) -> SessionData:
-    """Load a session. Without `session_id` the most recently started one is used."""
+    """Load a session. Without `session_id` the latest match is used (see
+    `default_session`)."""
+    if session_id is None:
+        pick = default_session(list_sessions(db_path))
+        if pick is None:
+            raise ValueError(f"No session found in {db_path}")
+        session_id = pick.session_id
     conn = sqlite3.connect(f"file:{Path(db_path)}?mode=ro", uri=True)
     try:
         conn.row_factory = sqlite3.Row
-        if session_id is None:
-            row = conn.execute(
-                "SELECT * FROM session ORDER BY started_utc DESC LIMIT 1"
-            ).fetchone()
-        else:
-            row = conn.execute(
-                "SELECT * FROM session WHERE session_id=?", (session_id,)
-            ).fetchone()
+        row = conn.execute(
+            "SELECT * FROM session WHERE session_id=?", (session_id,)
+        ).fetchone()
         if row is None:
             raise ValueError(f"No session found in {db_path}")
 
@@ -311,7 +415,9 @@ def load_session(db_path: str | Path, session_id: Optional[str] = None) -> Sessi
         ]
 
         # active_riot_id may be absent on a session table written before this
-        # column existed (RiftLab is read-only and cannot migrate the file).
+        # column existed (RiftLab is read-only and cannot migrate the file);
+        # likewise kind and utc_offset_min before schema 5. An idle session
+        # simply has no game rows, so the game queries come back empty.
         row_keys = row.keys()
         return SessionData(
             session_id=sid,
@@ -325,6 +431,12 @@ def load_session(db_path: str | Path, session_id: Optional[str] = None) -> Sessi
             deaths=_read_deaths(conn, sid, anchor, row["started_utc"], events,
                                 row["active_riot_id"]
                                 if "active_riot_id" in row_keys else None),
+            kind=_kind(row["kind"] if "kind" in row_keys else None),
+            utc_offset_min=(row["utc_offset_min"]
+                            if "utc_offset_min" in row_keys else None),
+            rest_windows=_read_rest_windows(conn, row["started_utc"],
+                                            row["ended_utc"]
+                                            if "ended_utc" in row_keys else None),
         )
     finally:
         conn.close()

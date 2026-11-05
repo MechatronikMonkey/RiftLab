@@ -230,3 +230,181 @@ def test_a_riot_name_matches_in_either_spelling() -> None:
 
     assert normalise_name("Stomper85#8252") == normalise_name("Stomper85") == "stomper85"
     assert normalise_name(None) == ""
+
+
+# -- RiftRec schema v5: idle sessions, local time, the check-in rest window --
+
+_SCHEMA_V5 = """
+CREATE TABLE session (session_id TEXT PRIMARY KEY, participant_id TEXT,
+  session_index INTEGER, started_utc TEXT, ended_utc TEXT, mono_anchor_ns INTEGER,
+  app_version TEXT, schema_version INTEGER, notes TEXT, active_riot_id TEXT,
+  kind TEXT, utc_offset_min INTEGER);
+CREATE TABLE hr_sample (session_id TEXT, mono_ns INTEGER, utc TEXT, hr_bpm INTEGER,
+  contact INTEGER);
+CREATE TABLE rr_interval (session_id TEXT, mono_ns INTEGER, utc TEXT, rr_ms REAL);
+CREATE TABLE game_event (session_id TEXT, mono_ns INTEGER, utc TEXT, game_time_s REAL,
+  event_id INTEGER, event_type TEXT, payload_json TEXT);
+CREATE TABLE game_snapshot (session_id TEXT, mono_ns INTEGER, utc TEXT, game_time_s REAL,
+  kills INTEGER, deaths INTEGER, assists INTEGER, cs INTEGER, gold REAL, level INTEGER,
+  is_dead INTEGER, respawn_timer_s REAL);
+CREATE TABLE gap (session_id TEXT, source TEXT, start_utc TEXT, end_utc TEXT);
+CREATE TABLE checkin (checkin_id TEXT PRIMARY KEY, session_id TEXT,
+  participant_id TEXT, questionnaire_version INTEGER NOT NULL,
+  opened_utc TEXT NOT NULL, submitted_utc TEXT, utc_offset_min INTEGER,
+  sleep_quality INTEGER, sleep_hours INTEGER, alcohol TEXT, caffeine TEXT,
+  nicotine TEXT, last_meal TEXT, exercise TEXT, exercise_ended TEXT, ill TEXT,
+  feeling INTEGER, adhd_medication TEXT, rest_status TEXT, rest_start_utc TEXT,
+  rest_end_utc TEXT);
+"""
+
+# One evening the way RiftRec 0.2.0 writes it: idle, match 1, idle, match 2,
+# idle - contiguous, all on one strap. CEST, so local time is UTC + 120 min.
+# (session_id, kind, session_index, started, ended)
+_EVENING = [
+    ("idle-a", "idle", None, "2026-10-14T17:30:00+00:00", "2026-10-14T17:42:00+00:00"),
+    ("match-1", "match", 1, "2026-10-14T17:42:00+00:00", "2026-10-14T18:10:00+00:00"),
+    ("idle-b", "idle", None, "2026-10-14T18:10:00+00:00", "2026-10-14T18:20:00+00:00"),
+    ("match-2", "match", 2, "2026-10-14T18:20:00+00:00", "2026-10-14T18:50:00+00:00"),
+    ("idle-c", "idle", None, "2026-10-14T18:50:00+00:00", "2026-10-14T19:10:00+00:00"),
+]
+
+
+def _make_v5_db(path: Path, *, sessions=_EVENING,
+                rest=("completed", "2026-10-14T17:35:00+00:00",
+                      "2026-10-14T17:36:00+00:00")) -> None:
+    """A synthetic schema 5 file. Every session gets three HR/RR samples
+    200 s apart; matches also get one game event, idle sessions none. `rest`
+    is (status, start, end) of the check-in's resting window."""
+    conn = sqlite3.connect(path)
+    conn.executescript(_SCHEMA_V5)
+    for n, (sid, kind, idx, started, ended) in enumerate(sessions):
+        anchor = (n + 1) * 10_000_000_000_000
+        conn.execute(
+            "INSERT INTO session VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (sid, "P01", idx, started, ended, anchor, "0.2.0", 5, None,
+             "Stomper#8252" if kind == "match" else None, kind, 120))
+        for i, hr in enumerate((70, 72, 74)):
+            mono = anchor + i * 200_000_000_000
+            conn.execute("INSERT INTO hr_sample VALUES (?,?,?,?,?)",
+                         (sid, mono, "u", hr, None))
+            conn.execute("INSERT INTO rr_interval VALUES (?,?,?,?)",
+                         (sid, mono, "u", 60000.0 / hr))
+        if kind == "match":
+            conn.execute("INSERT INTO game_event VALUES (?,?,?,?,?,?,?)",
+                         (sid, anchor + 30_000_000_000, "u", 0.0, 0, "GameStart",
+                          '{"EventName": "GameStart"}'))
+    status, start, end = rest
+    conn.execute(
+        "INSERT INTO checkin (checkin_id, session_id, participant_id, "
+        "questionnaire_version, opened_utc, submitted_utc, utc_offset_min, "
+        "sleep_quality, rest_status, rest_start_utc, rest_end_utc) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        ("c-1", sessions[0][0], "P01", 1, "2026-10-14T17:31:00+00:00",
+         "2026-10-14T17:34:00+00:00", 120, 3, status, start, end))
+    conn.commit()
+    conn.close()
+
+
+def test_a_v4_file_still_loads_as_matches_only() -> None:
+    """Before schema 5 every session was a match and there was no check-in;
+    the new fields must take their old meaning, not raise."""
+    from riftlab.loader import list_sessions
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "v4.sqlite"
+        sid = _make_v4_db(db)
+        data = load_session(db)
+
+        assert data.session_id == sid
+        assert data.kind == "match" and not data.is_idle
+        assert data.utc_offset_min is None
+        assert data.rest_windows == []
+        assert len(data.events) == 1 and len(data.deaths) == 1   # unchanged
+        info, = list_sessions(db)
+        assert info.kind == "match" and info.utc_offset_min is None
+
+
+def test_v5_lists_matches_by_index_then_idle_by_start() -> None:
+    from riftlab.loader import list_sessions
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "v5.sqlite"
+        _make_v5_db(db)
+        infos = list_sessions(db)
+
+        assert [i.session_id for i in infos] == [
+            "match-1", "match-2", "idle-a", "idle-b", "idle-c"]
+        assert [i.is_idle for i in infos] == [False, False, True, True, True]
+        assert infos[2].utc_offset_min == 120
+        assert infos[2].ended_utc == "2026-10-14T17:42:00+00:00"
+
+
+def test_without_a_choice_the_latest_match_is_opened_not_the_trailing_idle() -> None:
+    """The file ends on an idle stretch - the heart rate after the last game.
+    Opening that by default would show a recording without a single event."""
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "v5.sqlite"
+        _make_v5_db(db)
+        data = load_session(db)
+
+        assert data.session_id == "match-2"
+        assert data.session_index == 2 and not data.is_idle
+
+
+def test_a_file_without_any_match_opens_its_latest_session() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "v5.sqlite"
+        _make_v5_db(db, sessions=[s for s in _EVENING if s[1] == "idle"])
+        assert load_session(db).session_id == "idle-c"
+
+
+def test_an_idle_session_loads_with_heart_rate_and_no_game_data() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "v5.sqlite"
+        _make_v5_db(db)
+        data = load_session(db, session_id="idle-b")
+
+        assert data.is_idle and data.kind == "idle"
+        assert data.session_index is None and data.active_riot_id is None
+        assert data.utc_offset_min == 120
+        assert np.allclose(data.hr_t, [0.0, 200.0, 400.0])
+        assert data.rr_ms.size == 3
+        assert data.events == [] and data.deaths == []
+        assert data.duration_s == 400.0
+
+
+def test_an_idle_session_renders_a_chart_without_game_data() -> None:
+    """The static chart the CLI draws - it must not need a single event."""
+    from riftlab.plot import render_to_file
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "v5.sqlite"
+        _make_v5_db(db)
+        out = Path(tmp) / "idle.png"
+        render_to_file(load_session(db, session_id="idle-a"), str(out))
+        assert out.stat().st_size > 0
+
+
+def test_the_rest_window_lands_in_the_session_it_was_measured_in() -> None:
+    """Matched by time: 17:35-17:36 lies in idle-a (started 17:30) and in no
+    other session of the evening."""
+    from riftlab.plot import rest_bands
+
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "v5.sqlite"
+        _make_v5_db(db)
+        idle_a = load_session(db, session_id="idle-a")
+        w, = idle_a.rest_windows
+        assert (w.status, w.start_t_s, w.end_t_s) == ("completed", 300.0, 360.0)
+        band, = rest_bands(idle_a)
+        assert (band.start_t_s, band.end_t_s, band.label) == (300.0, 360.0, "rest 60 s")
+
+        for sid in ("match-1", "idle-b", "match-2", "idle-c"):
+            assert load_session(db, session_id=sid).rest_windows == []
+
+
+def test_a_checkin_closed_before_the_rest_measurement_has_no_window() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        db = Path(tmp) / "v5.sqlite"
+        _make_v5_db(db, rest=(None, None, None))
+        assert load_session(db, session_id="idle-a").rest_windows == []

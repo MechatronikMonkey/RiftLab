@@ -8,13 +8,19 @@ here means the interesting logic is unit-tested without spinning up Qt.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import numpy as np
 
-from ..loader import SessionData, SessionInfo
+from ..loader import SessionData, SessionInfo, default_session
 from ..metrics import rolling_rmssd
-from ..plot import _EVENT_DEF, _ROWS, GapBand, _norm, classify, gap_bands
+from ..plot import (
+    _EVENT_DEF, _ROWS, GapBand, RestBand, _norm, classify, gap_bands, rest_bands,
+)
+
+# What a between-match (idle, schema 5) recording is called on screen.
+IDLE_LABEL = "between matches"
 
 # RMSSD rolling-window bounds offered by the GUI spinbox.
 RMSSD_WINDOW_MIN = 3
@@ -81,11 +87,14 @@ def session_header(data: SessionData) -> str:
     """
     who = data.participant_id or "anonymous"
     parts = [f"Participant {who}"]
-    if data.session_index is not None:
+    if data.is_idle:
+        parts.append(IDLE_LABEL)
+    elif data.session_index is not None:
         parts.append(f"session {data.session_index}")
     parts.append(data.started_utc[:19].replace("T", " "))
     parts.append(f"duration {format_duration(data.duration_s)}")
-    parts.append(f"{len(data.events)} events")
+    if not data.is_idle:            # an idle recording has no game data at all
+        parts.append(f"{len(data.events)} events")
     if data.active_riot_id:
         parts.append(f"active: {data.active_riot_id}")
     return "   ·   ".join(parts)
@@ -116,22 +125,81 @@ def nearest_value(t: np.ndarray, v: np.ndarray, x: float) -> Optional[float]:
     return None if np.isnan(val) else val
 
 
-def session_label(info: SessionInfo) -> str:
-    """Human-readable dropdown label for a session (index + start time).
+def clock_time(stamp: Optional[str], utc_offset_min: Optional[int]) -> Optional[str]:
+    """An ISO-8601 UTC stamp as `HH:MM` wall-clock time, or None if unusable.
 
-    The started_utc is trimmed to `YYYY-MM-DD HH:MM:SS`; the pseudonymous
-    participant_id is shown (never a Riot id), so the label stays anonymous.
+    Shifted by `utc_offset_min` (minutes east of UTC) when it is known - that
+    is the time the participant saw on the clock. Without it the UTC time is
+    returned unchanged; the caller says so, since an hour's difference is
+    exactly the kind of error nobody notices.
     """
+    if not stamp:
+        return None
+    try:
+        t = datetime.fromisoformat(stamp)
+    except ValueError:
+        return None
+    if t.tzinfo is not None:
+        t = t.astimezone(timezone.utc)
+    if utc_offset_min is not None:
+        t += timedelta(minutes=utc_offset_min)
+    return t.strftime("%H:%M")
+
+
+def session_label(info: SessionInfo) -> str:
+    """Human-readable dropdown label for a session (pure).
+
+    A match shows index + start time, trimmed to `YYYY-MM-DD HH:MM:SS` (local
+    time when the file carries the offset, schema 5; UTC before that); the
+    pseudonymous participant_id is shown (never a Riot id), so the label stays
+    anonymous. A between-match recording shows its clock span instead -
+    local time when the file says what that is, otherwise UTC, marked as such.
+    """
+    if info.is_idle:
+        start = clock_time(info.started_utc, info.utc_offset_min)
+        end = clock_time(info.ended_utc, info.utc_offset_min)
+        if start is None:
+            span = info.started_utc or "?"
+        elif end is None:
+            span = f"from {start}"           # not closed (yet)
+        else:
+            span = f"{start}–{end}"
+        zone = "" if info.utc_offset_min is not None else " UTC"
+        return f"{IDLE_LABEL} · {span}{zone}"
     idx = "?" if info.session_index is None else str(info.session_index)
     who = info.participant_id or "anonymous"
     when = info.started_utc[:19].replace("T", " ")
+    if info.utc_offset_min is not None:
+        # Same clock as the between-match rows next to it in the dropdown:
+        # a match at "09:03" between idle stretches at "11:03" reads as wrong.
+        try:
+            t = datetime.fromisoformat(info.started_utc)
+            if t.tzinfo is not None:
+                t = t.astimezone(timezone.utc)
+            when = (t + timedelta(minutes=info.utc_offset_min)).strftime(
+                "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            pass
     return f"#{idx} - {who} - {when}"
+
+
+def default_session_index(infos: list[SessionInfo]) -> int:
+    """Position of `loader.default_session` in a listed file, -1 if empty.
+
+    The dropdown opens on the latest match, the same session the CLI shows
+    without --session.
+    """
+    pick = default_session(infos)
+    return -1 if pick is None else infos.index(pick)
 
 
 def hr_plot_model(data: SessionData) -> HrPlotModel:
     """Build the HR plot model from a loaded session (pure)."""
     who = data.participant_id or "anonymous"
-    sess = "" if data.session_index is None else f" - session {data.session_index}"
+    if data.is_idle:
+        sess = f" - {IDLE_LABEL}"
+    else:
+        sess = "" if data.session_index is None else f" - session {data.session_index}"
     title = f"RiftLab - {who}{sess} - {data.started_utc[:19].replace('T', ' ')}"
     return HrPlotModel(
         t_s=data.hr_t,

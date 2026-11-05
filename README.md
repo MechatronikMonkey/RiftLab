@@ -46,10 +46,23 @@ you pick the file to view yourself in the next step.
 ## 3 · Open a session file
 
 Click **`Open .sqlite...`** (top left) and choose a recording. These are the
-`.sqlite` files that RiftRec wrote into its storage folder (one file can hold
-several matches). If the file contains more than one session, pick the one you
-want from the **Session** dropdown next to the button — you can also step
-through them with **Page Up / Page Down**.
+`.sqlite` files that RiftRec wrote into its storage folder. One file holds a
+whole evening: every match, and — from RiftRec 0.2.0 on, which records the heart
+rate from the moment the chest strap connects — the stretches **between** the
+matches too (client lobby, champion select, loading screen, after the game).
+Pick what you want from the **Session** dropdown next to the button, or step
+through it with **Page Up / Page Down**:
+
+- **Matches** come first, in order: `#1 - P01 - 2026-10-14 17:42:00`, `#2 - …`
+  (start time in UTC).
+- **Between-match recordings** follow, by start time, labelled with the clock
+  time they ran: `between matches · 19:42–20:05`. That is the participant's
+  local time when the file records it; older or incomplete files show UTC and
+  say so (`… UTC`).
+
+A file opens on its **latest match**. Only a file without any match opens on its
+latest between-match recording. A between-match recording has the heart-rate and
+HRV panels as usual but no game events — that is expected, not missing data.
 
 Once a session is loaded you see three stacked panels sharing one time axis:
 
@@ -65,8 +78,14 @@ Once a session is loaded you see three stacked panels sharing one time axis:
   line across all three panels, so you can read the physical reaction to it.
   Hover a dot to see the event details.
 
-A **metadata line** under the toolbar shows participant, session, start time,
-duration and event count. Move the mouse over the panels and a **crosshair**
+A **green band** marks the 60 s **resting measurement** of the daily check-in
+that RiftRec offers before the first match — usually in the first
+between-match recording of the evening — labelled `rest 60 s`. A measurement
+that was aborted or skipped part-way is drawn fainter and labelled that way
+(`rest aborted after 22 s`).
+
+A **metadata line** under the toolbar shows participant, session (or "between
+matches"), start time, duration and event count. Move the mouse over the panels and a **crosshair**
 follows it, with a readout (top right) of the time and the HR / RMSSD value at
 that moment.
 
@@ -130,7 +149,8 @@ python -m riftlab gui path/to/session.sqlite
 python -m riftlab plot path/to/session.sqlite
 python -m riftlab plot path/to/session.sqlite --out chart.png
 
-# Specific session id (otherwise the most recently started one)
+# Specific session id (otherwise the latest match; a between-match
+# recording only if the file holds no match)
 python -m riftlab plot session.sqlite --session <uuid>
 
 # Split kill/death/assist by the player's Riot name
@@ -146,6 +166,23 @@ python -m riftrec record --source fake --seconds 60 --db demo.sqlite
 > **pyside6 >= 6.9.3 is required.** PySide6 6.9.1 has a shiboken bug where
 > pyqtgraph items are never anchored in the ViewBox (curves and markers render
 > in the wrong place and do not track zoom). See the pin in `requirements.txt`.
+
+## Schema versions
+
+RiftLab reads RiftRec files up to **schema 5** (`SUPPORTED_SCHEMA_VERSION` in
+`riftlab/__init__.py`, with the history of each step). Every change so far was
+additive, and every file ever written still opens: a missing table or column
+is read as an older file, never as an error. Schema 5 (RiftRec 0.2.0) added:
+
+- `session.kind` — `'match'` or `'idle'` (heart rate between matches: no
+  `game_*` rows, `session_index` and `active_riot_id` NULL). NULL in older
+  files, read as `'match'`.
+- `session.utc_offset_min` — local UTC offset at session start, minutes east of
+  UTC; used for the local clock time in the session dropdown.
+- `checkin` — the daily questionnaire plus a 60 s resting measurement. RiftLab
+  uses only the resting window (`rest_status`, `rest_start_utc`,
+  `rest_end_utc`), matched to a session by time; the answers are not analysed
+  here.
 
 ## Layout
 

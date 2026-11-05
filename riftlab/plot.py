@@ -118,6 +118,63 @@ def gap_bands(data: SessionData) -> list[GapBand]:
     return bands
 
 
+# How a resting measurement (schema 5 check-in) is shaded. A completed window
+# is the real baseline; an aborted or skipped one is drawn fainter, so it is
+# still findable but not mistaken for a full measurement.
+REST_STYLE: dict[str, tuple[str, float]] = {
+    "completed": ("#4daf4a", 0.18),
+    "aborted": ("#4daf4a", 0.07),
+    "skipped": ("#4daf4a", 0.07),
+}
+_REST_FALLBACK = ("#4daf4a", 0.07)
+
+
+@dataclass(frozen=True)
+class RestBand:
+    """A resting measurement, as a shaded stretch with a short label."""
+
+    start_t_s: float
+    end_t_s: float
+    status: Optional[str]
+    color: str
+    alpha: float
+    label: str
+
+
+def _rest_label(status: Optional[str], seconds: float) -> str:
+    s = int(round(seconds))
+    if status == "completed":
+        return f"rest {s} s"
+    if status in ("aborted", "skipped"):
+        return f"rest {status} after {s} s"
+    return f"rest {s} s ({status or 'status unknown'})"
+
+
+def rest_bands(data: SessionData) -> list[RestBand]:
+    """Turn the session's resting windows into drawable bands (pure).
+
+    The label carries the measured length, the shading is clipped to the
+    session so a window that straddles its start or end does not paint over
+    the neighbouring recording's axis. A window without an end is skipped: the
+    recorder did not say how long it ran, and a guessed 60 s would be drawn as
+    if it had been measured.
+    """
+    end_of_session = max(data.duration_s, 0.0)
+    bands: list[RestBand] = []
+    for w in data.rest_windows:
+        if w.end_t_s is None or w.end_t_s <= w.start_t_s:
+            continue
+        start, stop = max(w.start_t_s, 0.0), min(w.end_t_s, end_of_session)
+        if stop <= start:
+            continue                 # entirely outside the recorded span
+        color, alpha = REST_STYLE.get(w.status or "", _REST_FALLBACK)
+        bands.append(RestBand(
+            start_t_s=start, end_t_s=stop, status=w.status, color=color,
+            alpha=alpha, label=_rest_label(w.status, w.end_t_s - w.start_t_s),
+        ))
+    return bands
+
+
 def classify(ev: EventMark, active_norm: str) -> Optional[str]:
     """Map an event to an icon key, or None if it should not be marked."""
     et = ev.event_type
@@ -203,7 +260,14 @@ def make_figure(data: SessionData, rmssd_window: int = 10,
             ax.axvspan(band.start_t_s, band.end_t_s, color=band.color,
                        alpha=band.alpha, lw=0, zorder=0,
                        label=band.label if (first and ax is ax_hr) else None)
-    if labelled:
+    # Resting measurements (schema 5 check-in): few, so each gets its label.
+    rests = rest_bands(data)
+    for band in rests:
+        for ax in (ax_hr, ax_hrv, ax_ev):
+            ax.axvspan(band.start_t_s, band.end_t_s, color=band.color,
+                       alpha=band.alpha, lw=0, zorder=0,
+                       label=band.label if ax is ax_hr else None)
+    if labelled or rests:
         ax_hr.legend(loc="upper left", fontsize=8)
 
     # -- Event timeline + vertical markers across ALL three panels -------
@@ -237,7 +301,10 @@ def make_figure(data: SessionData, rmssd_window: int = 10,
     ax_ev.grid(True, axis="x", alpha=0.2)
 
     who = data.participant_id or "anonymous"
-    sess = f" · session {data.session_index}" if data.session_index is not None else ""
+    if data.is_idle:
+        sess = " · between matches"
+    else:
+        sess = f" · session {data.session_index}" if data.session_index is not None else ""
     fig.suptitle(f"RiftLab — {who}{sess} · {data.started_utc[:19]}", fontsize=12)
     fig.tight_layout()
     return fig

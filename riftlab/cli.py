@@ -2,7 +2,7 @@
 
 Without --out a window is opened (show); with --out the chart is rendered
 headlessly to a PNG. --session selects a specific session id (otherwise the
-most recent one).
+latest match; a between-match recording only if the file holds no match).
 
 `python -m riftlab gui [session.sqlite]` opens the interactive viewer (EW-53).
 """
@@ -110,7 +110,7 @@ def main(argv: list[str] | None = None) -> None:
 
     p = sub.add_parser("plot", help="Plot the HR/HRV trend of a session")
     p.add_argument("db_path", help="Path to the RiftRec .sqlite session")
-    p.add_argument("--session", default=None, help="Session id (otherwise the latest)")
+    p.add_argument("--session", default=None, help="Session id (otherwise the latest match)")
     p.add_argument("--out", default=None, help="PNG output (otherwise a window)")
     p.add_argument("--rmssd-window", type=int, default=10)
     p.add_argument("--active-player", default=None,
